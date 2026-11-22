@@ -1,110 +1,171 @@
 # HAProxy Studio
 
-[Русская инструкция](README.ru.md)
+**Бесплатная веб-панель для управления существующим HAProxy.** Интерфейс и основная инструкция — на русском. Работает на вашем Linux-сервере без внешней телеметрии. Лицензия [MIT](LICENSE).
 
-Self-hosted Russian-language administration interface for an existing HAProxy.
-Independent project: no commercial subscription, vendor account or external telemetry.
+[English](README.en.md) · [Подробная установка и диагностика](docs/installation.ru.md) · [Публикация сервисов](docs/services.ru.md)
 
-## Visual service publishing
+## Какой вариант выбрать
 
-The three-step Russian-language wizard publishes HTTP/HTTPS, WebSocket, RDP/RDS Connection Broker, SSH, SMTP/submission/SMTPS, IMAP/IMAPS, POP3/POP3S, ManageSieve, databases and generic TCP/TLS services. It includes certificate import (PEM/CRT/KEY and PFX/P12), redirects, backend pools, health checks, source IP restrictions and edit/disable/delete workflows. [Wizard guide](docs/services.ru.md). OpenSSL CLI and system CA certificates are required for native certificate/TLS operations.
+| Вариант | Возможности | Когда выбирать |
+|---|---|---|
+| **Нативная установка через systemd — основной вариант** | Публикация сервисов, управление конфигурацией, сертификатами, пользователями, резервными копиями и плавная перезагрузка HAProxy | Для полноценного управления HAProxy |
+| **Docker Compose — дополнительный вариант** | Просмотр состояния, статистики и конфигурации HAProxy хоста; аккаунты самой панели | Если нужен только мониторинг |
 
-## Accounts and resource maintenance
+Docker не требуется для нативной установки. Готовый контейнер не содержит HAProxy и не может проверять или применять конфигурацию хоста. Переключение `read_only` на `false` не превращает его в полноценную управляющую установку. Не запускайте оба варианта на одном порту 9130.
 
-Version 0.4 adds password changes, administrator/viewer accounts, named certificate management and dependency-aware deletion of manually configured backend pools, including conf.d files. Existing administrator credentials migrate without rotation. [Administration guide (Russian)](docs/administration.ru.md).
+## Что умеет панель
 
-## Status
+- Мастер публикации HTTPS/HTTP, WebSocket, RDP, RDS через Connection Broker, SSH, почтовых протоколов, баз данных и других TCP/TLS-сервисов.
+- Перенаправление HTTP → HTTPS, домены и пути, пулы серверов, проверки доступности и ограничения по IP.
+- Загрузка PEM/CRT/KEY и PFX/P12, понятные названия сертификатов, переименование и удаление неиспользуемых сертификатов.
+- Шаблоны Exchange и общие TLS-порты с SNI.
+- Смена пароля, аккаунты администраторов и пользователей с доступом только для просмотра.
+- Проверка реальным HAProxy, просмотр изменений, резервные копии и откат при ошибке применения. Удаление ручных backend-пулов с проверкой связанных правил.
 
-Initial development release. Linux is the administration target. Python 3.9+;
-no Python runtime dependencies. Native installation targets Debian 12+, Ubuntu
-22.04+, CentOS Stream 9, Rocky Linux 9 and AlmaLinux 9 with systemd. These are
-targets, not a claim that production installation was verified on every OS.
-CI includes distribution userspace and installed-HAProxy validation tests;
-container tests do not verify a booted systemd host or SELinux policy.
+## Пошаговая установка: полный режим управления
 
-## Native installation
+Устанавливайте панель **на тот Linux-сервер, где работает HAProxy**. Адреса внутренних приложений задаются позже в веб-интерфейсе. Для команд нужны права `sudo` или root.
 
-Install Python 3.9+ and an existing HAProxy with your distribution package manager.
-Clone this repository or extract its source archive, then run:
+Требования: Python 3.9+, HAProxy, OpenSSL, системные CA-сертификаты и systemd. Целевые системы: Debian 12+, Ubuntu 22.04+, CentOS Stream 9, Rocky Linux 9 и AlmaLinux 9. Матрица CI проверяет окружения дистрибутивов; загрузка systemd и политики SELinux на каждой системе отдельно не проверяются.
+
+### Шаг 1. Установите зависимости
+
+**Debian / Ubuntu:**
 
 ```sh
+sudo apt-get update
+sudo apt-get install -y git python3 openssl ca-certificates nano
+```
+
+**CentOS Stream / Rocky Linux / AlmaLinux:**
+
+```sh
+sudo dnf install -y git python3 openssl ca-certificates nano
+```
+
+Проверьте Python:
+
+```sh
+python3 --version
+```
+
+HAProxy должен быть уже установлен и настроен. Если его ещё нет, отдельно установите пакет `haproxy` через `apt-get` или `dnf` и настройте службу перед продолжением. Не заменяйте работающую установку HAProxy ради панели. Для нового пустого сервера есть [отдельный пример запуска](docs/installation.ru.md#новый-сервер-без-настроенного-haproxy).
+
+### Шаг 2. Скачайте исходники
+
+```sh
+git clone https://github.com/ITNetSystem/haproxy-studio.git
+cd haproxy-studio
+```
+
+### Шаг 3. Сохраните копию HAProxy и установите панель
+
+```sh
+sudo cp -a /etc/haproxy "/etc/haproxy.backup-$(date +%Y%m%d-%H%M%S)"
 sudo sh scripts/install.sh
-sudoedit /etc/haproxy-studio/config.json
+```
+
+Установщик размещает приложение в `/opt/haproxy-studio`, настройки — в `/etc/haproxy-studio/config.json`, данные — в `/var/lib/haproxy-studio`. Он сохраняет существующие настройки панели и не запускает и не перезагружает HAProxy.
+
+### Шаг 4. Сверьте настройки с вашим сервером
+
+```sh
+sudo nano /etc/haproxy-studio/config.json
+```
+
+Основные параметры:
+
+| Параметр | Что указать |
+|---|---|
+| `config_file` | Основной конфиг HAProxy, обычно `/etc/haproxy/haproxy.cfg` |
+| `extra_config_dir` | Каталог `*.cfg`, который HAProxy действительно загружает. Если дополнительных файлов нет, укажите пустую строку `""` |
+| `runtime_socket` | UNIX socket статистики HAProxy, например `/var/lib/haproxy/stats` |
+| `certificate_dir` | Каталог PEM-сертификатов, обычно `/etc/haproxy/certificates` |
+| `haproxy_binary` | `"auto"` или полный путь к исполняемому файлу HAProxy |
+| `read_only` | На первый запуск оставьте `true` |
+| `bind`, `port` | Оставьте `"127.0.0.1"` и `9130` для входа через SSH-туннель |
+| `public_url` | Оставьте `"http://127.0.0.1:9130"` для описанного ниже SSH-туннеля; это origin без `/haproxy-admin/` |
+
+Панель читает статистику через runtime socket. Если его нет или путь отличается, выполните [настройку runtime socket](docs/installation.ru.md#runtime-socket-и-дополнительные-конфиги), прежде чем ожидать статистику в интерфейсе. Отсутствие socket не мешает форме входа, но обзор покажет, что runtime API недоступен.
+
+### Шаг 5. Запустите панель и получите начальный пароль
+
+```sh
 sudo systemctl enable --now haproxy-studio
+sudo systemctl status haproxy-studio --no-pager
 sudo cat /var/lib/haproxy-studio/initial-password
 ```
 
-Open `http://127.0.0.1:9130/haproxy-admin/`, username `admin`. From another machine,
-use an SSH tunnel: `ssh -L 9130:127.0.0.1:9130 user@server`.
-For permanent browser access, configure an HTTPS reverse proxy and set `public_url`
-to its exact origin (for example `https://admin.example.org`, without the base path).
-No firewall, DNS or public proxy rule is created by the installer.
-The initial password is generated locally, never committed or printed in logs.
+Логин: **`admin`**. Пароль генерируется индивидуально при первом запуске. После смены пароля через веб файл `initial-password` не обновляется и больше не показывает актуальный пароль.
 
-The installer preserves existing application settings, never installs/replaces
-HAProxy and does not start or reload either service. Native apply mode needs
-privileges to read HAProxy dependencies, replace its config, and reload the service.
-Review these permissions before enabling writes. Start with `read_only: true`.
+### Шаг 6. Откройте веб-интерфейс
 
-## Configuration and portability
+На **своём компьютере**, с которого открываете браузер, выполните:
 
-Copy `config.example.json` to a private file. Set `STUDIO_CONFIG` to its path.
-Every host-specific path is configurable: executable (auto-detected with PATH plus
-/usr/local/sbin and /usr/sbin fallbacks), config, extra config directory, runtime
-socket, certificate directory, state directory, URL and port. Reload and health
-checks are argument arrays, executed without a shell. A non-systemd host can use
-its own command adapter. Runtime socket access requires appropriate file permissions.
-The systemd example permits writes only under /etc/haproxy and the state directory;
-if changing paths, update ReadWritePaths too. SELinux may require a local policy;
-the installer never disables it. Windows/macOS are development/browser clients,
-not native management targets for a Linux HAProxy service.
+```sh
+ssh -N -L 9130:127.0.0.1:9130 user@SERVER_IP
+```
 
-## Docker
+Замените `user` на SSH-пользователя сервера, а `SERVER_IP` — на его IP или домен. Оставьте это SSH-подключение открытым. В браузере на своём компьютере откройте:
+
+**http://127.0.0.1:9130/haproxy-admin/**
+
+Войдите как `admin` и смените пароль в **Мой аккаунт**. Затем проверьте обзор и существующие маршруты. Для постоянного доменного адреса без SSH-туннеля используйте [инструкцию HTTPS](docs/installation.ru.md#постоянный-доступ-по-https).
+
+### Шаг 7. Включите управление
+
+Когда пути, конфигурация и команды управления сверены, измените в `/etc/haproxy-studio/config.json`:
+
+```json
+"read_only": false
+```
+
+Это **один параметр внутри существующего JSON**, а не полное содержимое файла. Затем:
+
+```sh
+sudo systemctl restart haproxy-studio
+```
+
+Перезапуск панели завершит её текущие сеансы; войдите снова. Теперь в **Сервисы → Добавить сервис** можно публиковать приложения. Мастер подготовит конфигурацию; для записи и перезагрузки HAProxy потребуется ваше подтверждение в панели. [Первый сервис — пошагово](docs/services.ru.md).
+
+## Docker: дополнительный режим мониторинга
+
+Для полного управления используйте шаги выше. Этот раздел нужен только для отдельной установки панели **наблюдения**. Docker Engine и Compose plugin должны быть уже установлены на Linux-хосте с HAProxy.
+
+1. Скачайте репозиторий командами из шага 2.
+2. Сверьте `compose.yaml`: каталоги `/etc/haproxy` и `/var/lib/haproxy` должны соответствовать хосту. В `deploy/docker-config.json` задайте правильные пути основного конфига, дополнительных файлов, сертификатов и `runtime_socket`. Если socket лежит в другом каталоге, добавьте соответствующий read-only bind mount в Compose. У контейнера должен быть доступ к нужным файлам и socket.
+3. Запустите и проверьте контейнер:
 
 ```sh
 docker compose up -d --build
+docker compose ps
+docker compose logs --tail=50 studio
 docker compose exec studio cat /var/lib/haproxy-studio/initial-password
 ```
 
-The provided container is a **read-only monitor** for the host HAProxy. Adjust bind
-mounts and runtime socket path to your host. The image does not include a second
-HAProxy binary and does not validate or apply host configs. A read-only bind mount
-does not make Unix socket commands read-only: the application issues only `show info`
-and `show stat`. No Docker socket, privileged container, host PID namespace or host
-systemd mount is required. Docker Desktop cannot access a remote Linux HAProxy socket
-through local mounts. For full control install natively on the HAProxy host.
-For SELinux hosts use a reviewed local policy, not indiscriminate relabelling of
-system HAProxy directories. The image builds locally and the test suite passes on its Debian/Python 3.12 base; host-mount deployment on other OSes is not yet verified.
+4. Откройте тот же SSH-туннель из шага 6 и войдите по тому же локальному адресу. Логин — `admin`, пароль — из команды выше. Docker публикует порт только на loopback хоста.
 
-## Changes and recovery
+Данные пользователей панели сохраняются в томе `studio-state`. Команда `docker compose down` сохраняет том, а `docker compose down -v` удаляет его вместе с аккаунтами. Docker socket и управление systemd хоста контейнеру не передаются. На SELinux-хостах может потребоваться отдельная политика доступа; не применяйте без разбора `:Z` к системным каталогам HAProxy. Docker Desktop на другом компьютере не предоставляет доступ к socket удалённого Linux-сервера.
 
-Write mode: configuration draft → HAProxy validation → redacted diff → explicit
-apply. Applying rechecks the revision and validates again, stores a private backup,
-replaces the file atomically, then gracefully reloads HAProxy. A failed reload
-restores the previous file and attempts a recovery reload. The UI reports recovery
-failure and keeps the backup. Backups and credentials live outside the repository.
-Extra *.cfg files participate in revision checks and validation. The service wizard
-and raw editor change the main file; manual backend deletion can also update
-referencing rules and pools in conf.d with backup and rollback across changed files. Secrets stay masked with protected placeholders. The editor
-preserves non-UTF-8 bytes in unchanged lines.
+## Обновление установленной панели
 
-## Development
+В каталоге **исходников** нативной установки:
 
 ```sh
-cp config.example.json config.json
-# Set local state_dir and your public_url; keep read_only true.
-STUDIO_CONFIG=./config.json python3 -m haproxy_studio
-python3 -m unittest discover -s tests -v
+git pull --ff-only
+sudo sh scripts/install.sh
+sudo systemctl restart haproxy-studio
 ```
 
-## License and private data
+Настройки и аккаунты сохраняются. Перед обновлением рекомендуется [сохранить данные панели](docs/installation.ru.md#резервная-копия-и-восстановление-пароля). Для Docker из каталога исходников выполните `git pull --ff-only` и `docker compose up -d --build`.
 
-MIT licensed. Server settings, account databases, certificates, private keys and
-backups belong outside the source tree and are excluded from release archives.
-The installer does not upload source or runtime data to GitHub.
+## Инструкции
 
-## Exchange и общие TLS-порты
+- [Подробная установка, HTTPS, диагностика и резервное копирование](docs/installation.ru.md).
+- [Публикация сервисов и сертификаты](docs/services.ru.md).
+- [Пароли, пользователи, сертификаты и ручные backend-пулы](docs/administration.ru.md).
+- [Exchange и SNI для почтовых сервисов](docs/exchange-sni.ru.md).
+- [RDS через Connection Broker](docs/rds.ru.md).
+- [English README](README.en.md).
 
-В версии 0.3 добавлены группы доменов, маршруты и проверки служб Exchange, перенаправление корня, HTTP-исключения, общие SMTPS/IMAPS/POP3S-порты с SNI и fallback. [Инструкция и ограничения STARTTLS](docs/exchange-sni.ru.md).
-
-Version 0.5 adds an RDS Connection Broker template with native RDP forwarding and broker-token persistence to configured Session Hosts. [RDS guide (Russian)](docs/rds.ru.md).
+Проверки для разработчиков: `python3 -m unittest discover -s tests -v`. Пароли, приватные ключи, рабочие конфиги и резервные копии хранятся вне исходников. [Правила сообщения об уязвимостях](SECURITY.md).

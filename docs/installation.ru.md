@@ -1,0 +1,213 @@
+# Установка HAProxy Studio: подробности
+
+Основные шаги установки находятся в [русском README](../README.md). Здесь — дополнительные настройки и диагностика. Команды ниже предназначены для нативной установки; Docker отдельно описан в README.
+
+## Новый сервер без настроенного HAProxy
+
+Этот раздел нужен только для **нового сервера без рабочих публикаций**. Если HAProxy уже обслуживает ваши приложения, сохраните его конфигурацию и переходите к настройке панели.
+
+1. Установите HAProxy:
+
+```sh
+# Debian / Ubuntu:
+sudo apt-get install -y haproxy
+
+# ИЛИ CentOS Stream / Rocky Linux / AlmaLinux:
+sudo dnf install -y haproxy
+```
+
+Выполните только команду своей системы. Если файл `/etc/haproxy/haproxy.cfg` уже существует, сохраните копию перед редактированием.
+
+2. Подготовьте каталог socket:
+
+```sh
+sudo install -d -m 755 /var/lib/haproxy
+sudo nano /etc/haproxy/haproxy.cfg
+```
+
+Для первого запуска пустого сервера можно использовать минимальный конфиг ниже. Он создаёт только локальный тестовый HTTP-вход на `127.0.0.1:18080`; внешние приложения через него пока не публикуются. Не заменяйте им рабочий конфиг.
+
+```haproxy
+global
+    stats socket /var/lib/haproxy/stats mode 600 level user
+    user haproxy
+    group haproxy
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend local_health
+    bind 127.0.0.1:18080
+    http-request return status 200 content-type text/plain string HAProxy-ready
+```
+
+3. Проверьте конфиг и запустите службу:
+
+```sh
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+sudo systemctl enable --now haproxy
+sudo systemctl status haproxy --no-pager
+```
+
+Если HAProxy уже был запущен с предыдущим конфигом, после успешной проверки выполните `sudo systemctl reload haproxy`. Дальше установите панель по README. Для этого примера `extra_config_dir` в настройках панели должен быть `""`, а `runtime_socket` — `/var/lib/haproxy/stats`.
+
+## Runtime socket и дополнительные конфиги
+
+Панель и HAProxy должны использовать один и тот же UNIX socket и одинаковый набор файлов конфигурации. Узнайте, как запущен HAProxy:
+
+```sh
+sudo systemctl cat haproxy
+sudo ss -xlpn
+```
+
+Если runtime socket уже настроен, укажите **существующий путь** в `runtime_socket` настроек панели. Пример строки в секции `global` конфигурации HAProxy:
+
+```haproxy
+    stats socket /var/lib/haproxy/stats mode 600 level user
+```
+
+Добавляйте эту строку только если подходящего UNIX socket нет. Для чтения `show info` и `show stat` хватает уровня `user`. Панели не нужен открытый TCP admin socket. Каталог для socket должен существовать и быть доступен HAProxy при запуске.
+
+При изменении конфигурации сначала проверьте её **с теми же файлами**, которые загружает служба. Например, для одного файла:
+
+```sh
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+```
+
+Если служба также загружает `/etc/haproxy/conf.d`, пример проверки:
+
+```sh
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d
+```
+
+Затем примените проверенную конфигурацию:
+
+```sh
+sudo systemctl reload haproxy
+```
+
+Вызовите это только после успешной проверки. Для нестандартной установки используйте фактический путь к HAProxy и фактическую команду службы. Наличие каталога `conf.d` само по себе не означает, что HAProxy его читает: это должно быть указано в запуске службы. Если дополнительных файлов нет, задайте `extra_config_dir: ""` в JSON панели.
+
+## Параметры установки
+
+Файл настроек: `/etc/haproxy-studio/config.json`. Он не является конфигурацией HAProxy.
+
+| Параметр | Назначение |
+|---|---|
+| `bind` | Интерфейс самой панели. Для нативной установки обычно `127.0.0.1` |
+| `port` | Порт самой панели, обычно `9130` |
+| `base_path` | URL-префикс, обычно `/haproxy-admin` |
+| `public_url` | Точный origin, через который браузер обращается к панели: схема, домен и при необходимости порт, **без URL-пути** |
+| `config_file` | Основной файл HAProxy |
+| `extra_config_dir` | Дополнительные `*.cfg` или пустая строка |
+| `runtime_socket` | UNIX socket статистики HAProxy |
+| `certificate_dir` | Каталог PEM для загрузки и выбора сертификатов |
+| `state_dir` | Аккаунты, хеши паролей, журнал и приватные резервные копии |
+| `haproxy_binary` | `auto` или полный путь, например `/usr/sbin/haproxy` |
+| `read_only` | `true` — наблюдение, `false` — возможность применения изменений |
+| `reload_command` | Массив аргументов команды перезагрузки, например `["systemctl", "reload", "haproxy"]` |
+| `health_command` | Массив проверки службы, например `["systemctl", "is-active", "--quiet", "haproxy"]` |
+| `ca_bundle` | `auto` либо путь к доверенным CA для проверки TLS внутренних серверов |
+
+JSON требует двойных кавычек и не допускает комментарии. Команды задаются массивами аргументов, не shell-строками.
+
+Штатный unit запускает панель с правами root и ограничивает запись через `ReadWritePaths=/etc/haproxy /var/lib/haproxy-studio`. Администраторы панели могут менять конфигурацию процесса HAProxy. Если вы переносите конфиг, сертификаты или `state_dir` в другие каталоги, скорректируйте также unit:
+
+```sh
+sudo systemctl edit haproxy-studio
+```
+
+Добавьте нужные каталоги в секции `[Service]` с помощью `ReadWritePaths=`, затем выполните `sudo systemctl daemon-reload` и `sudo systemctl restart haproxy-studio`. Учитывайте владельца файлов, права доступа и SELinux; установщик его не отключает. Если HAProxy запускается не через systemd, понадобится собственный способ запуска панели и свои команды reload/health.
+
+## Постоянный доступ по HTTPS
+
+Для SSH-туннеля этот раздел не нужен. Для постоянного URL:
+
+1. Создайте DNS-запись домена на адрес сервера и подготовьте действующий сертификат для существующего HTTPS reverse proxy.
+2. Оставьте панель на `127.0.0.1:9130`.
+3. В настройках панели задайте, например, `public_url: "https://admin.example.org"`; `base_path` оставьте `/haproxy-admin`.
+4. На HTTPS reverse proxy направьте запросы к `/haproxy-admin/` в `127.0.0.1:9130` **с сохранением пути и исходного Host**. Нельзя удалять префикс или подменять Host адресом `127.0.0.1:9130`.
+5. Проверьте конфигурацию reverse proxy и примените её; перезапустите только панель, чтобы она перечитала свой JSON.
+6. Откройте `https://admin.example.org/haproxy-admin/`.
+
+Ниже — пример дополнения **уже работающего** HTTPS frontend HAProxy. Это не полный конфиг: TLS bind, сертификат и существующие маршруты остаются вашими. Имена нужно сделать уникальными. Разместите правило выбора панели до более общих `use_backend`; существующие redirect/deny/auth-правила тоже должны пропускать этот путь.
+
+```haproxy
+frontend existing_https
+    # Здесь уже должен быть ваш HTTPS bind и другие настройки.
+    acl studio_host hdr(host) -i admin.example.org
+    acl studio_path path_beg /haproxy-admin/
+    use_backend haproxy_studio_ui if studio_host studio_path
+    # Далее существующие маршруты и default_backend.
+
+backend haproxy_studio_ui
+    mode http
+    server studio 127.0.0.1:9130 check
+```
+
+Этот пример предполагает существующий frontend в режиме `http`; для TLS passthrough без расшифровки маршрутизация по URL-пути недоступна. Открывайте URL с завершающим `/`. Если используете нестандартный HTTPS-порт, укажите его в `public_url` и сопоставлении Host. Домен `admin.example.org` здесь — пример, замените его своим.
+
+После смены `public_url` вход через другой origin, включая старый SSH-туннель, будет отклонён: это проверка Host/Origin и защита от CSRF. При публичном HTTPS cookies помечаются Secure. Порт 9130 не требуется открывать для Интернета.
+
+## Резервная копия и восстановление пароля
+
+Аккаунты и настройки не находятся в Git. Для согласованной копии остановите **только панель**, сохраните её конфигурацию и `state_dir`, затем запустите панель:
+
+```sh
+sudo systemctl stop haproxy-studio
+sudo tar -czf /root/haproxy-studio-private-backup.tar.gz /etc/haproxy-studio /var/lib/haproxy-studio
+sudo chmod 600 /root/haproxy-studio-private-backup.tar.gz
+sudo systemctl start haproxy-studio
+```
+
+Повторный запуск команды заменит архив по этому имени; для нескольких копий используйте разные имена. При нестандартном `state_dir` замените путь. Отдельно сохраняйте конфигурацию HAProxy и каталог сертификатов. Архив содержит хеши паролей, возможные секреты резервных конфигов и другие приватные данные; храните его вне репозитория.
+
+Обычная смена пароля выполняется через **Мой аккаунт**. Если пароль администратора забыт:
+
+```sh
+sudo systemctl stop haproxy-studio
+cd /opt/haproxy-studio
+sudo env STUDIO_CONFIG=/etc/haproxy-studio/config.json python3 -m haproxy_studio --reset-password
+sudo systemctl start haproxy-studio
+sudo cat /var/lib/haproxy-studio/initial-password
+```
+
+Команда восстанавливает аккаунт `admin`; остальные пользователи сохраняются. Используйте новый пароль и смените его через веб. Не публикуйте этот файл или содержимое `users.json` в issues.
+
+## Если что-то не работает
+
+### Панель не запускается
+
+```sh
+sudo systemctl status haproxy-studio --no-pager
+sudo journalctl -u haproxy-studio -n 80 --no-pager
+```
+
+Проверьте Python 3.9+, синтаксис JSON, путь к приложению и права записи в `state_dir`. В режиме управления должны существовать исполняемый файл HAProxy и непустые reload/health-команды. Журнал может содержать приватные пути — проверяйте его перед публикацией.
+
+### Браузер не открывает панель
+
+Проверьте, что служба активна, SSH-туннель запущен на вашем компьютере и локальный порт 9130 свободен. Используйте `127.0.0.1`, а не `localhost`, если `public_url` задан через `127.0.0.1`. Для HTTPS проверьте DNS, сертификат и сохранение пути/Host на reverse proxy.
+
+### Ошибка адреса, Origin или CSRF
+
+Адрес в браузере должен соответствовать `public_url`. Не добавляйте `/haproxy-admin` в значение `public_url`; путь задаётся отдельно в `base_path`. После изменения настроек перезапустите панель и войдите заново по правильному адресу.
+
+### Runtime API недоступен
+
+Сверьте `runtime_socket` с конфигурацией HAProxy, наличие самого socket, права доступа и ограничения systemd/SELinux. В Docker дополнительно проверьте, что каталог socket смонтирован в контейнер по соответствующему пути. Контейнер должен иметь права доступа к socket; read-only mount сам по себе не ограничивает команды UNIX socket.
+
+### Кнопки изменения отключены
+
+Проверьте `read_only` и роль аккаунта. Наблюдатель может только смотреть настройки и менять свой пароль. Готовый Docker-вариант предназначен только для наблюдения, даже если пользователь панели — администратор.
+
+### HAProxy отклоняет публикацию
+
+Проверьте сообщения проверки в панели, доступность файлов сертификатов, совпадение основного конфига и набора `conf.d` с запуском службы, конфликты портов и доменов. Не используйте непроверенный конфиг. При ошибке применения панель восстанавливает изменённые файлы; если восстановительная перезагрузка не подтверждена, проверьте HAProxy вручную через systemd.
+
+### В Docker нет управления сервисами
+
+Это ожидаемое ограничение готового образа. Для управления HAProxy на хосте используйте нативную установку из README. Не передавайте контейнеру Docker socket или systemd хоста как способ «включить» управление.
