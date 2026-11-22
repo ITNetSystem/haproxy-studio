@@ -1,0 +1,39 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -v
+      - run: sh -n scripts/install.sh
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ['debian:12', 'ubuntu:24.04', 'rockylinux:9', 'almalinux:9', 'quay.io/centos/centos:stream9']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test distribution userspace
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src "$IMAGE" sh -ec '
+            if command -v apt-get >/dev/null; then apt-get update -qq; apt-get install -y python3 haproxy openssl; else dnf install -y python3 haproxy openssl; fi
+            PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+            sh -n scripts/install.sh
+          '
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker build -t haproxy-studio:test .

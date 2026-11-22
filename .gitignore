@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+config.json
+state/
+backups/
+*.pem
+*.key
+*.crt
+*.db
+*.sqlite*
+dist/
+*.egg-info/
+.impeccable/review/
+
+# Certificate containers and private material
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.cer
+*.der
+
+# Local authentication and installation state
+auth.json
+users.json
+certificate-labels.json
+initial-password
+audit.jsonl

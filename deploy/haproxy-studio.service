@@ -1,0 +1,21 @@
+[Unit]
+Description=HAProxy Studio administration interface
+After=network.target haproxy.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/haproxy-studio
+Environment=STUDIO_CONFIG=/etc/haproxy-studio/config.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m haproxy_studio
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/haproxy /var/lib/haproxy-studio
+
+[Install]
+WantedBy=multi-user.target

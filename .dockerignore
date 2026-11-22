@@ -1,0 +1,19 @@
+.git
+.env
+.env.*
+config.json
+state
+backups
+**/__pycache__
+*.pem
+*.key
+.impeccable
+
+# Certificate containers and private material
+**/*.pem
+**/*.key
+**/*.crt
+**/*.pfx
+**/*.p12
+**/*.cer
+**/*.der

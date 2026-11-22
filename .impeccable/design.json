@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-19T14:52:28.818432+00:00",
+  "title": "Design System: HAProxy Studio",
+  "extensions": {
+    "shadows": [],
+    "motion": [
+      {
+        "name": "control-feedback",
+        "value": "background .16s, color .16s",
+        "purpose": "State feedback; disabled with reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "767px"
+      },
+      {
+        "name": "intermediate",
+        "value": "1100px"
+      },
+      {
+        "name": "wide",
+        "value": "1600px"
+      }
+    ],
+    "focus": {
+      "value": "3px solid #37836b",
+      "offset": "3px",
+      "purpose": "Keyboard focus."
+    },
+    "backdrop": {
+      "value": "rgb(16 30 24 / .5)",
+      "purpose": "Review dialog backdrop."
+    },
+    "serviceWizard": {
+      "steps": [
+        "Service type",
+        "Addresses and security",
+        "Review"
+      ],
+      "titleSize": "22px",
+      "mobileProgressSize": "12px",
+      "component": "native inputs, selects, checkbox labels and details"
+    },
+    "enterprise": {
+      "routeDisclosure": "native details",
+      "multiDomainCertificates": "native labelled multiple select",
+      "sni": "explicit domains and fallback",
+      "health": "per-component disclosure"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Configuration and authentication actions.",
+      "html": "<button class=\"ds-primary\">Проверить изменения</button>",
+      "css": ".ds-primary{font:600 14px/1.55 Manrope,system-ui,sans-serif;background:#17664e;color:white;border:1px solid #17664e;border-radius:8px;padding:10px 16px;min-height:44px;transition:background .16s,color .16s}.ds-primary:hover{background:#104c3a}.ds-primary:focus-visible{outline:3px solid #37836b;outline-offset:3px}.ds-primary:disabled{opacity:.55;cursor:default}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting actions.",
+      "html": "<button class=\"ds-secondary\">Обновить данные</button>",
+      "css": ".ds-secondary{font:600 14px/1.55 Manrope,system-ui,sans-serif;background:#fff;color:#202726;border:1px solid #dce2df;border-radius:8px;padding:10px 16px;min-height:44px}.ds-secondary:hover{background:#edf1ee}.ds-secondary:active{background:#e0e8e2}.ds-secondary:focus-visible{outline:3px solid #37836b;outline-offset:3px}"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Route and server filtering.",
+      "html": "<label for=\"search\">Поиск маршрута или сервера</label><input class=\"ds-input\" id=\"search\" type=\"search\" placeholder=\"Имя, домен или адрес\">",
+      "css": ".ds-input{font:14px/1.55 Manrope,system-ui,sans-serif;border:1px solid #dce2df;border-radius:8px;padding:12px;background:#fff;color:#202726;caret-color:#17664e;min-height:44px}.ds-input::placeholder{color:#596561}.ds-input:focus-visible{outline:3px solid #37836b;outline-offset:3px}"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "description": "Graphite section navigation.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Основная навигация\"><button aria-current=\"page\">Обзор</button><button>Маршруты и серверы</button></nav>",
+      "css": ".ds-nav{display:grid;gap:8px;background:#192522;padding:16px}.ds-nav button{font:400 14px/1.55 Manrope,system-ui,sans-serif;text-align:left;color:#c0cec7;background:transparent;border:0;border-radius:8px;padding:10px 16px;min-height:44px}.ds-nav button:hover{background:#263a32;color:white}.ds-nav button[aria-current]{background:#304b3f;color:white}.ds-nav button:focus-visible{outline:3px solid #37836b;outline-offset:3px}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Text accompanies status color.",
+      "html": "<span class=\"ds-badge ds-good\">UP</span> <span class=\"ds-badge ds-bad\">DOWN</span>",
+      "css": ".ds-badge{font:12px/1.55 Manrope,system-ui,sans-serif;color:#202726;background:#eef1ef;padding:5px 10px;border-radius:6px;white-space:nowrap}.ds-badge.ds-good{background:#e9f3ed;color:#12503c}.ds-badge.ds-bad{background:#fcebec;color:#a62d31}"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat bordered working surface.",
+      "html": "<section class=\"ds-panel\"><div class=\"ds-heading\"><h2>Экземпляр HAProxy</h2></div><div class=\"ds-body\">Данные установки</div></section>",
+      "css": ".ds-panel{font:14px/1.55 Manrope,system-ui,sans-serif;color:#202726;background:white;border:1px solid #dce2df;border-radius:12px;overflow:hidden}.ds-heading{padding:24px}.ds-body{padding:0 24px 24px}.ds-panel h2{font-size:18px;line-height:1.4}@media(max-width:767px){.ds-heading{padding:20px}.ds-body{padding:0 20px 20px}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Operate",
+    "overview": "A light administrative workspace with graphite navigation, forest-green actions, compact route tables and readable configuration. Status comes from actual installation data. No approved raster comp was used; the user delegated direction and implementation.",
+    "keyCharacteristics": [
+      "Light workspace and graphite navigation.",
+      "Restrained green actions and explicit status text.",
+      "Compact tables and readable configuration.",
+      "Responsive navigation and account controls."
+    ],
+    "rules": [],
+    "dos": [
+      "Use real data and explicit unavailable states.",
+      "Keep focus, table scrolling and mobile logout accessible."
+    ],
+    "donts": [
+      "Do not fabricate charts or healthy zero values.",
+      "Do not introduce promotional hero content."
+    ]
+  }
+}

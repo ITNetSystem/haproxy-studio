@@ -1,0 +1,15 @@
+{
+  "bind": "0.0.0.0",
+  "port": 9130,
+  "base_path": "/haproxy-admin",
+  "public_url": "http://127.0.0.1:9130",
+  "state_dir": "/var/lib/haproxy-studio",
+  "config_file": "/etc/haproxy/haproxy.cfg",
+  "extra_config_dir": "/etc/haproxy/conf.d",
+  "runtime_socket": "/var/lib/haproxy/stats",
+  "certificate_dir": "/etc/haproxy/certificates",
+  "read_only": true,
+  "reload_command": [],
+  "health_command": [],
+  "ca_bundle": "auto"
+}
