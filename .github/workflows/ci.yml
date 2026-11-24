@@ -37,3 +37,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: docker build -t haproxy-studio:test .
+
+  haproxy-syntax:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        haproxy: ['2.4', '2.6', '2.8', '3.0', '3.2', '3.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check wizard syntax with official HAProxy
+        env:
+          HAPROXY_VERSION: ${{ matrix.haproxy }}
+        run: python scripts/check-haproxy-matrix.py --versions "$HAPROXY_VERSION"

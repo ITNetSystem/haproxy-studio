@@ -15,6 +15,7 @@ from .core import Engine, Conflict, mask
 from .resources import Resources
 from .accounts import Accounts
 from .settings import load
+from .startup import diagnostics, notify_ready
 from .services import ServiceManager
 from .certificates import upload as upload_certificate
 
@@ -252,10 +253,15 @@ class Application:
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--reset-password', action='store_true', help='Rotate credentials, then restart the service')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--reset-password', action='store_true', help='Rotate credentials, then restart the service')
+    group.add_argument('--check', action='store_true', help='Check settings and HAProxy version without changing state')
     args = parser.parse_args()
     os.umask(0o077)
     settings = load()
+    if args.check:
+        diagnostics(settings)
+        return
     app = Application(settings)
     if args.reset_password:
         app.reset_password()
@@ -263,4 +269,6 @@ def main():
         return
     server = ThreadingHTTPServer((settings['bind'], settings['port']), app.handler())
     server.daemon_threads = True
+    notify_ready()
+    print('HAProxy Studio готова. Данные: '+str(app.engine.state)+'. Пароль не выводится в журнал.', flush=True)
     server.serve_forever()

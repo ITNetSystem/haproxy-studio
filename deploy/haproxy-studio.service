@@ -3,7 +3,9 @@ Description=HAProxy Studio administration interface
 After=network.target haproxy.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30
 WorkingDirectory=/opt/haproxy-studio
 Environment=STUDIO_CONFIG=/etc/haproxy-studio/config.json
 Environment=PYTHONDONTWRITEBYTECODE=1

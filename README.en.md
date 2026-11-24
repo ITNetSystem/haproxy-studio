@@ -13,6 +13,12 @@ The three-step Russian-language wizard publishes HTTP/HTTPS, WebSocket, RDP/RDS 
 
 Version 0.4 adds password changes, administrator/viewer accounts, named certificate management and dependency-aware deletion of manually configured backend pools, including conf.d files. Existing administrator credentials migrate without rotation. [Administration guide (Russian)](docs/administration.ru.md).
 
+## HAProxy compatibility and readiness
+
+Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 24 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
+
+Version 0.5.1 adds `--check` for non-mutating diagnostics and `Type=notify` readiness. Reinstall the unit and restart the service after updating; `enable --now` does not restart an already running process. See the [Russian troubleshooting guide](docs/installation.ru.md).
+
 ## Status
 
 Initial development release. Linux is the administration target. Python 3.9+;

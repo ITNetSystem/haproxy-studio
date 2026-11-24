@@ -39,6 +39,9 @@ def load(path=None):
     result["haproxy_binary"] = executable(result["haproxy_binary"])
     if not result["read_only"] and (not result["haproxy_binary"] or not result["reload_command"] or not result["health_command"]):
         raise ValueError("Write mode requires HAProxy binary, reload and health commands")
+    if not result['read_only']:
+        from .startup import require_compatible
+        require_compatible(result['haproxy_binary'])
     origin = urlsplit(result["public_url"])
     if origin.scheme not in ("http", "https") or not origin.netloc or origin.path not in ("", "/") or origin.query or origin.fragment or origin.username:
         raise ValueError("public_url must be an HTTP(S) origin")

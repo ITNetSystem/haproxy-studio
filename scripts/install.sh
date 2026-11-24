@@ -15,4 +15,4 @@ if [ ! -f /etc/haproxy-studio/config.json ]; then
 fi
 install -m 644 "$source_dir/deploy/haproxy-studio.service" /etc/systemd/system/haproxy-studio.service
 systemctl daemon-reload
-printf '%s\n' 'Installed. Review /etc/haproxy-studio/config.json, then:' 'systemctl enable --now haproxy-studio' 'Initial password: /var/lib/haproxy-studio/initial-password' 'Default: read-only, http://127.0.0.1:9130/haproxy-admin/'
+printf '%s\n' 'Установлено. Проверьте /etc/haproxy-studio/config.json, затем:' 'cd /opt/haproxy-studio' 'STUDIO_CONFIG=/etc/haproxy-studio/config.json python3 -m haproxy_studio --check' 'systemctl enable --now haproxy-studio' 'systemctl restart haproxy-studio  # если панель уже работала: enable --now её не перезапускает' 'После успешного запуска: cat /var/lib/haproxy-studio/initial-password' 'При ошибке: journalctl -u haproxy-studio -n 50 --no-pager' 'Если state_dir изменён, ищите initial-password в нём. Существующий пароль не сбрасывается.' 'По умолчанию: наблюдение, http://127.0.0.1:9130/haproxy-admin/'
