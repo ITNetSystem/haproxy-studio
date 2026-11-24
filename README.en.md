@@ -15,7 +15,7 @@ Version 0.4 adds password changes, administrator/viewer accounts, named certific
 
 ## HAProxy compatibility and readiness
 
-Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 24 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
+Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 26 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
 
 Version 0.5.1 adds `--check` for non-mutating diagnostics and `Type=notify` readiness. Reinstall the unit and restart the service after updating; `enable --now` does not restart an already running process. See the [Russian troubleshooting guide](docs/installation.ru.md).
 
@@ -114,3 +114,5 @@ The installer does not upload source or runtime data to GitHub.
 В версии 0.3 добавлены группы доменов, маршруты и проверки служб Exchange, перенаправление корня, HTTP-исключения, общие SMTPS/IMAPS/POP3S-порты с SNI и fallback. [Инструкция и ограничения STARTTLS](docs/exchange-sni.ru.md).
 
 Version 0.5 adds an RDS Connection Broker template with native RDP forwarding and broker-token persistence to configured Session Hosts. [RDS guide (Russian)](docs/rds.ru.md).
+
+Version 0.6 adds separate RD Gateway and RD Web Access HTTPS/443 templates using native TLS passthrough to Windows, source-IP affinity and optional shared SNI listeners. TCP only; UDP/3391 is not configured. The former broker template is explicitly named direct RDP/3389. [Russian guide](docs/rd-gateway.ru.md).

@@ -16,7 +16,9 @@ PRESETS = {
     'https': ('Сайт HTTPS',443,80,'http','terminate','Домен и сертификат на HAProxy. Сервер может работать по HTTP.'),
     'http': ('Сайт HTTP',80,80,'http','plain','Обычный сайт без TLS. Для публичного сайта лучше HTTPS.'),
     'websocket': ('WebSocket / веб-приложение',443,80,'http','terminate','HTTPS с поддержкой долгих WebSocket-соединений.'),
-    'rds': ('RDS через Connection Broker',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
+    'rdgateway': ('RDS: RD Gateway — шлюз HTTPS',443,443,'tcp','passthrough','Внешний RDP через HTTPS до Windows RD Gateway. Сквозной TLS, сертификат на Windows; TCP/443, без публикации UDP/3391.'),
+    'rdweb': ('RDS: RD Web Access — портал HTTPS',443,443,'tcp','passthrough','Веб-портал RDS по HTTPS: /RDWeb/. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
+    'rds': ('RDS: прямой RDP через брокер (3389)',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
     'rdp': ('Удалённый рабочий стол RDP',3389,3389,'tcp','plain','Прозрачная передача RDP. Шифрование и учётные записи на Windows-сервере.'),
     'ssh': ('SSH',22,22,'tcp','plain','Прозрачная передача SSH. Выберите свободный внешний порт, например 2222.'),
     'smtp': ('Почта SMTP / STARTTLS',25,25,'tcp','plain','SMTP и STARTTLS проходят без изменения. Сертификат хранится на почтовом сервере.'),
@@ -131,12 +133,19 @@ class ServiceManager:
             data=dict(data)
             data.setdefault('balance','leastconn')
             data.setdefault('timeout',28800)
+        if protocol in ('rdgateway','rdweb'):
+            data=dict(data)
+            data.setdefault('balance','source')
+            data.setdefault('timeout',28800 if protocol=='rdgateway' else 3600)
+            data.setdefault('sni_routing',True)
+            data.setdefault('sni_domains',data.get('domains') or data.get('domain',''))
         preset=PRESETS[protocol];name=data.get('name','')
         if not isinstance(name,str) or not 1<=len(name.strip())<=80 or any(ord(c)<32 for c in name):raise ValueError('Название сервиса: от 1 до 80 обычных символов.')
         mode=data.get('tls_mode',preset[4]);http=preset[3]=='http'
-        allowed=('plain','terminate') if http else (('passthrough','terminate') if protocol in ('smtps','imaps','pop3s','tls') else ('plain',))
+        allowed=('plain','terminate') if http else (('passthrough','terminate') if protocol in ('smtps','imaps','pop3s','tls','rdgateway','rdweb') else ('plain',))
         if mode not in allowed:raise ValueError('Выбранный TLS-режим несовместим с протоколом. RDP, SSH и STARTTLS передаются прозрачно.')
         if protocol in ('https','websocket','exchange') and mode!='terminate':raise ValueError('Для HTTPS выберите TLS-терминацию. Для сквозного TLS используйте шаблон TLS-сервис.')
+        if protocol in ('rdgateway','rdweb') and mode!='passthrough':raise ValueError('RD Gateway / RD Web в этом шаблоне используют сквозной TLS до Windows. Сертификат устанавливается на Windows-сервере.')
         if protocol=='http' and mode!='plain':raise ValueError('Для защищённого сайта используйте шаблон HTTPS.')
         public=data.get('bind_address','*')
         if public!='*':
@@ -179,6 +188,8 @@ class ServiceManager:
         certificate=data.get('certificate','') if mode=='terminate' else ''
         if mode=='terminate':self.certificate_path(certificate)
         model=dict(id=identifier,name=name.strip(),protocol=protocol,enabled=data.get('enabled',True) is True,port=number(data.get('port',preset[1]),'Внешний порт'),bind_address=public,domain=domain,path=path,tls_mode=mode,certificate=certificate,backends=servers,balance=balance,allowed_ips=' '.join(networks),health=health,health_path=health_path,upstream_tls=upstream_tls,upstream_verify=data.get('upstream_verify',True) is True,upstream_name=upstream_name,host_override=host_override,redirect=http and mode=='terminate' and data.get('redirect',True) is True,http_port=number(data.get('http_port',80),'Порт HTTP'),strip_prefix=http and path!='/' and data.get('strip_prefix',False) is True,hsts=http and mode=='terminate' and data.get('hsts',False) is True,timeout=number(data.get('timeout',3600),'Таймаут',5,86400),check_interval=number(data.get('check_interval',5),'Интервал проверок',1,300),maxconn=number(data.get('maxconn',0),'Лимит на сервер',0,100000),proxy_protocol=data.get('proxy_protocol',False) is True)
+        if protocol in ('rdgateway','rdweb'):
+            if upstream_tls or model['proxy_protocol'] or health not in ('none','tcp'):raise ValueError('RD Gateway / RD Web: используйте TCP-проверку без дополнительного TLS и PROXY protocol до Windows.')
         if protocol=='rds':
             model['rds_mode']=data.get('rds_mode','broker')
             if model['rds_mode'] not in ('broker','token'):raise ValueError('Выберите схему подключения RDS.')
@@ -248,6 +259,10 @@ class ServiceManager:
             if not (compatible_http or compatible_sni) or any(b['tls']!=tls for s,b in hits):raise ValueError('Порт '+str(port)+' уже занят несовместимым входом '+section['name']+'. Выберите другой внешний порт.')
             if model['bind_address'] in ('*','0.0.0.0','::') and all(b['host'] not in ('*','0.0.0.0','::') for s,b in hits):raise ValueError('Вход на этом порту доступен только на отдельном IP. Укажите тот же IP или свободный порт.')
             if compatible_sni:
+                if model['protocol'] in ('rdgateway','rdweb'):
+                    if not any(re.match(r'\s*tcp-request inspect-delay\b',line) for _,line in section['lines']):raise ValueError('Для общего TLS-входа нужен tcp-request inspect-delay. Настройте его перед публикацией SNI или выберите отдельный IP/порт.')
+                    for existing in parsed+other:
+                        if existing['mode']=='http' and any(('hdr(host)' in line or 'txn.host' in line) and any(d in re.findall(r'[a-z0-9-]+(?:\.[a-z0-9-]+)+',line.lower()) for d in model['domains']) for _,line in existing['lines']):raise ValueError('Домен уже указан в ручном HTTP-входе '+existing['name']+'. SNI-публикация перехватит его. Выберите другой домен или сначала согласуйте перенос существующего маршрута.')
                 for _,line in section['lines']:
                     if ('ssl_fc_sni' in line or 'req.ssl_sni' in line) and any(d in re.findall(r'[a-z0-9-]+(?:\.[a-z0-9-]+)+',line.lower()) for d in model['domains']):raise ValueError('SNI-домен уже используется ручными правилами этого входа.')
                 if model.get('sni_default') and any(re.match(r'\s*default_backend\b',line) for _,line in section['lines']):raise ValueError('У общего TCP-входа уже настроен сервер по умолчанию. Оставьте SNI fallback выключенным.')
@@ -399,6 +414,15 @@ class ServiceManager:
         import difflib
         checked.update(changed=candidate!=raw,diff=''.join(difflib.unified_diff(mask(raw)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Мастер публикации')),summary=summary,warnings=list(dict.fromkeys(warnings))+['Проверьте DNS и доступность внешнего порта в сети или у провайдера.'])
         if action!='delete':
+            if model['protocol'] in ('rdgateway','rdweb'):
+                gateway=model['protocol']=='rdgateway'
+                checked['summary'].append('Windows '+('RD Gateway: RDP через HTTPS, TCP/443.' if gateway else 'RD Web Access: откройте /RDWeb/ на опубликованном домене.'))
+                checked['warnings'].append('TLS передаётся до Windows без расшифровки. Сертификат Windows должен покрывать публичное имя; роли, коллекции, NLA и политики доступа настраиваются на Windows.')
+                if model.get('sni_routing'):checked['warnings'].append('На общем 443 клиенты должны отправлять SNI. Для клиента без SNI нужен отдельный IP/порт или согласованный fallback; существующий fallback не заменяется.')
+                if gateway:
+                    checked['warnings'].append('UDP/3391 не публикуется этим шаблоном. Для UDP-транспорта RD Gateway нужен отдельный NAT/балансировщик. Прямой RDP/3389 наружу этот шаблон не открывает.')
+                    if len(model['backends'])>1 and model['balance']!='source':checked['warnings'].append('Для нескольких RD Gateway рекомендуется балансировка по IP клиента: связанные TCP/RPC-подключения должны попадать на один сервер.')
+                else:checked['warnings'].append('Портал RD Web не заменяет RD Gateway. Если обе роли находятся на одном сервере под одним доменом, используйте одну публикацию RD Gateway вместо дублирующей публикации RD Web.')
             if model['protocol']=='rds':
                 token=model['rds_mode']=='token'
                 checked['summary'].append('RDS: '+('токенная маршрутизация брокера (msts) на Session Host.' if token else 'прозрачный вход на RDP-порт брокера / redirector.'))

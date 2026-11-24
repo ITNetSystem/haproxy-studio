@@ -15,7 +15,8 @@
 | Сайт HTTPS, WebSocket | 443 | Сертификат на HAProxy, HTTP или TLS до сервера |
 | Сайт HTTP | 80 | HTTP |
 | RDP | 3389 | Прозрачный TCP, нативная защита на сервере Windows |
-| RDS через Connection Broker | 3389 | RDP-вход брокера/redirector либо токенная маршрутизация msts; [инструкция](rds.ru.md) |
+| RDS: прямой RDP через брокер | 3389 | RDP-вход брокера/redirector либо токенная маршрутизация msts; [инструкция](rds.ru.md) |
+| RD Gateway / RD Web Access | 443 | Сквозной TLS до Windows, общий SNI или отдельный IP; [инструкция](rd-gateway.ru.md) |
 | SSH | 22 | Прозрачный SSH; если 22 занят SSH хоста, выберите другой внешний порт |
 | SMTP | 25 | Прозрачный SMTP/STARTTLS |
 | Отправка SMTP submission | 587 | Прозрачный SMTP/STARTTLS |
