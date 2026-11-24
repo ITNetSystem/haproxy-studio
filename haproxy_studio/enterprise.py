@@ -9,14 +9,14 @@ from urllib.parse import urlsplit
 
 EXCHANGE_PATHS = [('/owa','/owa/healthcheck.htm'),('/Autodiscover','/autodiscover/healthcheck.htm'),('/mapi','/mapi/healthcheck.htm'),('/Microsoft-Server-ActiveSync','/microsoft-server-activesync/healthcheck.htm'),('/ews','/ews/healthcheck.htm'),('/rpc','/rpc/healthcheck.htm'),('/ecp','/ecp/healthcheck.htm'),('/oab','/oab/healthcheck.htm')]
 
-def names(value):
+def names(value,allow_underscore=False):
     from .services import hostname
     if isinstance(value,str):value=re.split(r'[\s,;]+',value.strip())
     if not isinstance(value,list) or len(value)>32:raise ValueError('Не более 32 доменных имён.')
     result=[]
     for item in value:
         if not item:continue
-        domain=hostname(item,'Домен')
+        domain=hostname(item,'Домен',allow_underscore=allow_underscore)
         try:ipaddress.ip_address(domain)
         except ValueError:pass
         else:raise ValueError('Для маршрутизации по имени нужен домен, а не IP.')
@@ -30,7 +30,7 @@ def path(value,label='Путь'):
 def normalize(manager,data,m):
     from .services import PRESETS,number,hostname
     http=PRESETS[m['protocol']][3]=='http'
-    m['aliases']=names(data.get('aliases',[])) if http else []
+    m['aliases']=names(data.get('aliases',[]),allow_underscore=m['protocol']=='http') if http else []
     m['domains']=list(dict.fromkeys(([m['domain']]+m['aliases']) if http else names(data.get('sni_domains',[]))))
     m['sni_routing']=not http and data.get('sni_routing',False) is True
     m['sni_default']=m['sni_routing'] and data.get('sni_default',False) is True
@@ -47,7 +47,7 @@ def normalize(manager,data,m):
     if not isinstance(target,str) or len(target)>1024:raise ValueError('Некорректный адрес перенаправления.')
     if target:
         if target.startswith('/'):
-            target=path(target,'Перенаправление')
+            path(target,'Перенаправление')
         else:
             url=urlsplit(target)
             if url.scheme not in ('https','http') or not url.hostname or url.username or url.password or url.fragment or re.search(r'[\s#%\\]',target):raise ValueError('Перенаправление: путь /owa или полный адрес https://mail.example.org/owa.')
@@ -74,6 +74,9 @@ def normalize(manager,data,m):
     for row in routes:
         if not isinstance(row,dict):raise ValueError('Некорректный маршрут.')
         prefix=path(row.get('path',''))
+        match=row.get('match','segment')
+        if match not in ('segment','prefix'):raise ValueError('Сопоставление пути: сегмент или префикс.')
+        if match=='prefix':prefix=row['path']
         if m['path']!='/' and prefix!=m['path'] and not prefix.startswith(m['path']+'/'):raise ValueError('Маршрут должен находиться внутри основного пути сервиса.')
         key=prefix.lower() if m['path_ignore_case'] else prefix
         if key in seen:raise ValueError('Пути маршрутов не должны повторяться.')
@@ -90,7 +93,7 @@ def normalize(manager,data,m):
         if not isinstance(health_path,str) or not re.fullmatch(r'/[A-Za-z0-9/_~.\-?=&%]*',health_path):raise ValueError('Некорректная страница проверки пути.')
         balance=row.get('balance',m['balance'])
         if balance not in ('roundrobin','leastconn','source'):raise ValueError('Некорректная балансировка пути.')
-        m['routes'].append(dict(inherit_pool=inherit,path=prefix,action=action,health_path=health_path,health_status=status,timeout=number(row.get('timeout',m['timeout']),'Таймаут пути',5,86400),balance=balance,backends=servers))
+        m['routes'].append(dict(inherit_pool=inherit,match=match,path=prefix,action=action,health_path=health_path,health_status=status,timeout=number(row.get('timeout',m['timeout']),'Таймаут пути',5,86400),balance=balance,backends=servers))
     return m
 
 def model_domains(m):return m.get('domains') or [m['domain']]
@@ -115,27 +118,38 @@ def path_acl(name,prefix,ignore=False):
     return result
 
 def http_route(m,redirect=False):
-    ident='st_'+m['id'];conditions=[ident+'_host','{ dst_port '+str(m['http_port'] if redirect else m['port'])+' }']
-    body='    acl '+ident+'_host hdr(host),lower,field(1,:) -i '+' '.join(model_domains(m))+'\n'
-    if m['path']!='/':body+=path_acl(ident+'_path',m['path'],m.get('path_ignore_case'));conditions.append(ident+'_path')
+    ident='st_'+m['id'];conditions=[ident+'_host','{ dst_port '+str(m['http_port'] if redirect else m.get('route_port',m['port']))+' }']
+    fetch='hdr(host)' if (redirect or m['tls_mode']=='plain') and m.get('http_host_match')=='raw' else 'hdr(host),lower,field(1,:)'
+    body='    acl '+ident+'_host '+fetch+' -i '+' '.join(model_domains(m))+'\n'
+    host_condition=' '.join(conditions)
+    if not redirect and m.get('canonical_slash'):body+='    http-request redirect location '+m['path']+'/ code 302 if '+host_condition+' { path '+m['path']+' }\n'
+    if not redirect and m.get('redirect_root') and m.get('root_redirect'):body+='    http-request redirect location '+m['root_redirect']+' code 302 if '+host_condition+' { path / }\n'
+    if m['path']!='/' and not (redirect and m.get('http_redirect_all_paths')):body+=path_acl(ident+'_path',m['path'],m.get('path_ignore_case'));conditions.append(ident+'_path')
     condition=' '.join(conditions)
     if m['allowed_ips']:body+='    http-request deny deny_status 403 if '+condition+' !{ src '+m['allowed_ips']+' }\n'
+    if not redirect and m.get('reject_other_paths'):body+='    http-request deny deny_status 404 if '+host_condition+' !'+ident+'_path\n'
+    if m.get('http_action')=='redirect':
+        target='location '+m['http_redirect_location'] if m.get('http_redirect_location') else 'scheme https'
+        return body+'    http-request redirect '+target+' code '+str(m.get('redirect_code',301))+' if '+condition+'\n'
     if redirect:
+        if m.get('http_redirect_location'):return body+'    http-request redirect location '+m['http_redirect_location']+' code '+str(m.get('redirect_code',301))+' if '+condition+'\n'
+        if m.get('http_redirect_mode')=='scheme':return body+'    http-request redirect scheme https code '+str(m.get('redirect_code',301))+' if '+condition+'\n'
         exceptions=m.get('http_exceptions',[])
         for prefix in exceptions:body+=path_acl(ident+'_exception',prefix,m.get('path_ignore_case'))
         if exceptions:body+='    http-request allow if '+condition+' '+ident+'_exception\n    use_backend studio_be_'+m['id']+' if '+condition+' '+ident+'_exception\n'
-        origin='https://'+(m['domain'] if len(model_domains(m))==1 else '%[req.hdr(host),field(1,:)]')+(':'+str(m['port']) if m['port']!=443 else '')
-        body+='    http-request redirect prefix '+origin+' code 301 if '+condition+(' !'+ident+'_exception' if exceptions else '')+'\n'
+        origin='https://'+(model_domains(m)[0] if len(model_domains(m))==1 else '%[req.hdr(host),field(1,:)]')+(':'+str(m['port']) if m['port']!=443 else '')
+        body+='    http-request redirect prefix '+origin+' code '+str(m.get('redirect_code',301))+' if '+condition+(' !'+ident+'_exception' if exceptions else '')+'\n'
         return body
-    if m.get('root_redirect'):body+='    http-request redirect location '+m['root_redirect']+' code 302 if '+condition+' { path / }\n'
+    if m.get('root_redirect') and not m.get('redirect_root'):body+='    http-request redirect location '+m['root_redirect']+' code 302 if '+condition+' { path / }\n'
     routes=sorted(enumerate(m.get('routes',[])),key=lambda pair:-len(pair[1]['path']))
     for index,row in routes:
-        acl=ident+'_r'+route_key(m,row);body+=path_acl(acl,row['path'],m.get('path_ignore_case'))
+        acl=ident+'_r'+route_key(m,row);body+=('    acl '+acl+' path_beg '+('-i ' if m.get('path_ignore_case') else '')+row['path']+'\n' if row.get('match')=='prefix' else path_acl(acl,row['path'],m.get('path_ignore_case')))
         if row['action']=='deny':body+='    http-request deny deny_status 403 if '+condition+' '+acl+'\n'
+    if m.get('fallback_status') and routes:body+='    http-request deny deny_status '+str(m['fallback_status'])+' if '+condition+' '+' '.join('!'+ident+'_r'+route_key(m,row) for _,row in routes)+'\n'
     body+='    http-request allow if '+condition+'\n'
     for index,row in routes:
         if row['action']=='backend':body+='    use_backend studio_be_'+m['id']+'_r'+route_key(m,row)+' if '+condition+' '+ident+'_r'+route_key(m,row)+'\n'
-    return body+'    use_backend studio_be_'+m['id']+' if '+condition+'\n'
+    return body if m.get('fallback_status') and routes else body+'    use_backend studio_be_'+m['id']+' if '+condition+'\n'
 
 def tcp_route(m):
     fetch='ssl_fc_sni' if m['tls_mode']=='terminate' else 'req.ssl_sni'
@@ -145,7 +159,7 @@ def tcp_route(m):
     return result+'    use_backend studio_be_'+m['id']+' if '+acl+'\n'
 
 def backends(manager,m):
-    result=manager._backend_base(m)
+    result='' if m.get('fallback_status') and m.get('routes') else manager._backend_base(m)
     for index,row in enumerate(m.get('routes',[])):
         if row['action']!='backend':continue
         child=copy.deepcopy(m);child.update(row);child.update(id=m['id']+'_r'+route_key(m,row),health='http',strip_prefix=False,routes=[])

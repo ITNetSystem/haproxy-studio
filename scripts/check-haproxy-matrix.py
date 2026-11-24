@@ -22,10 +22,10 @@ def generate(root):
     settings=copy.deepcopy(DEFAULTS);settings.update(config_file=str(config),extra_config_dir='',certificate_dir=str(root),state_dir=str(root/'state'),ca_bundle=str(cert),read_only=False)
     manager=ServiceManager(Engine(settings))
     count=0
-    def save(name,values):
+    def save(name,values,baseline=BASE):
         nonlocal count
         models=[manager.normalize(v,format(i+1,'016x')) for i,v in enumerate(values)]
-        raw,_=manager.render(BASE,models,probe=False)
+        raw,_=manager.render(baseline,models,probe=False)
         (cases/(name+'.cfg')).write_text(decode(raw).replace(str(root),'/studio-check'));count+=1
     def data(protocol,**changes):
         value=dict(name='Compatibility '+protocol,protocol=protocol,domain='app.example.test',certificate='cert.pem',backends=[dict(host='192.0.2.10',port=PRESETS[protocol][2])]);value.update(changes);return value
@@ -34,6 +34,11 @@ def generate(root):
     for tls in ('terminate','passthrough'):
         save('shared-sni-'+tls,[data('imaps',tls_mode=tls,sni_routing=True,sni_domains='app.example.test',sni_default=True),data('imaps',tls_mode=tls,sni_routing=True,sni_domains='other.example.test')])
     save('shared-https',[data('https'),data('https',domain='other.example.test')])
+    save('preserve-redirect-only',[data('http',domain='_discovery.example.test',backends=[],http_action='redirect',redirect_code=302,http_host_match='raw')])
+    save('preserve-cookies-and-health',[data('https',cookie_name='SESSION',backends=[dict(host='192.0.2.10',port=443,cookie_value='first')],upstream_tls=True,upstream_verify=False,upstream_sni=False,upstream_tls_version='TLSv1.2',health='http',health_http_version='1.0',health_host='',timeout=900,tunnel_timeout=3600)])
+    save('preserve-tls-check-and-redirect',[data('tls',port=443,sni_routing=True,sni_domains='app.example.test',redirect=True,http_redirect_mode='scheme',proxy_protocol=True,health='tls',health_tls_verify=True,health_tls_name='app.example.test',health_send_proxy=True)])
+    layered=BASE+'frontend public_tls\n    bind 0.0.0.0:443\n    mode tcp\n    default_backend bridge\nbackend bridge\n    mode tcp\n    server local 127.0.0.1:8443 send-proxy-v2\nfrontend local_tls\n    bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert)+'\n    mode http\n    http-request set-header X-Forwarded-Proto https\n    http-request deny deny_status 421\n'
+    save('preserve-layered-https',[data('https',https_frontend='local_tls',forward_headers=False)],layered)
     return count
 
 def main():

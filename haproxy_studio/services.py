@@ -80,7 +80,7 @@ def number(value,label,minimum=1,maximum=65535):
     if not minimum<=result<=maximum:raise ValueError(label+': допустимо от '+str(minimum)+' до '+str(maximum)+'.')
     return result
 
-def hostname(value,label='Адрес сервера'):
+def hostname(value,label='Адрес сервера',allow_underscore=False):
     if not isinstance(value,str):raise ValueError(label+': укажите IP или домен.')
     value=value.strip().rstrip('.')
     if value.startswith('[') and value.endswith(']'):value=value[1:-1]
@@ -88,7 +88,7 @@ def hostname(value,label='Адрес сервера'):
     except ValueError:pass
     try:value=value.encode('idna').decode('ascii').lower()
     except UnicodeError:raise ValueError(label+': некорректный домен.')
-    if len(value)>253 or not value or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?',part) for part in value.split('.')):
+    if len(value)>253 or not value or not all(re.fullmatch(r'[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?' if allow_underscore else r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?',part) for part in value.split('.')):
         raise ValueError(label+': укажите только домен или IP, без протокола, порта и пути.')
     return value
 
@@ -139,6 +139,9 @@ class ServiceManager:
             data.setdefault('timeout',28800 if protocol=='rdgateway' else 3600)
             data.setdefault('sni_routing',True)
             data.setdefault('sni_domains',data.get('domains') or data.get('domain',''))
+        redirect_only=protocol=='http' and data.get('http_action')=='redirect'
+        if redirect_only:
+            data=dict(data);data.setdefault('health','none')
         preset=PRESETS[protocol];name=data.get('name','')
         if not isinstance(name,str) or not 1<=len(name.strip())<=80 or any(ord(c)<32 for c in name):raise ValueError('Название сервиса: от 1 до 80 обычных символов.')
         mode=data.get('tls_mode',preset[4]);http=preset[3]=='http'
@@ -151,7 +154,7 @@ class ServiceManager:
         if public!='*':
             try:public=str(ipaddress.ip_address(public))
             except (ValueError,TypeError):raise ValueError('Адрес прослушивания: * или IP этого сервера.')
-        domain=hostname(data.get('domain',''),'Домен сайта') if http else ''
+        domain=hostname(data.get('domain',''),'Домен сайта',allow_underscore=protocol=='http') if http else ''
         if http:
             try:ipaddress.ip_address(domain);raise ValueError('Для сайта укажите доменное имя, а не IP.')
             except ValueError as error:
@@ -160,12 +163,12 @@ class ServiceManager:
         if not isinstance(path,str) or not re.fullmatch(r'/[A-Za-z0-9/_~.\-]*',path) or '..' in path or len(path)>256:raise ValueError('Путь должен начинаться с / и не содержать пробелы, параметры или ..')
         path=path.rstrip('/') or '/'
         backends=data.get('backends',[])
-        if not isinstance(backends,list) or not 1<=len(backends)<=16:raise ValueError('Добавьте от 1 до 16 серверов.')
+        if not isinstance(backends,list) or not (0 if redirect_only else 1)<=len(backends)<=16:raise ValueError('Добавьте от 1 до 16 серверов.')
         servers=[]
         for row in backends:
             if not isinstance(row,dict):raise ValueError('Некорректная строка сервера.')
             servers.append(dict(host=hostname(row.get('host','')),port=number(row.get('port',preset[2]),'Порт сервера'),weight=number(row.get('weight',1),'Вес',1,256),backup=row.get('backup',False) is True))
-        if all(s['backup'] for s in servers):raise ValueError('Нужен хотя бы один основной сервер, не только резервные.')
+        if servers and all(s['backup'] for s in servers):raise ValueError('Нужен хотя бы один основной сервер, не только резервные.')
         balance=data.get('balance','roundrobin')
         if balance not in ('roundrobin','leastconn','source'):raise ValueError('Некорректная балансировка.')
         cidrs=data.get('allowed_ips','')
@@ -204,7 +207,8 @@ class ServiceManager:
             except ValueError:loop=server['host']=='localhost'
             if loop and server['port']==model['port'] and model['bind_address'] in ('*','0.0.0.0','::','127.0.0.1','::1'):raise ValueError('Внешний порт и локальный порт сервера совпадают: получится петля. Выберите другой внешний порт.')
         from .enterprise import normalize
-        return normalize(self,data,model)
+        from .preserve import normalize as preserve
+        return preserve(self,data,normalize(self,data,model))
 
     def certificate_path(self,name):
         if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Выберите сертификат из списка или загрузите PEM/CRT и ключ.')
@@ -223,7 +227,7 @@ class ServiceManager:
         runtime={m['id']:[row for row in rows if row['pxname']=='studio_be_'+m['id'] and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
         from .enterprise import route_key
         route_runtime={m['id']:[dict(path=row['path'],action=row['action'],rows=[entry for entry in rows if entry['pxname']=='studio_be_'+m['id']+'_r'+route_key(m,row) and entry['svname'] not in ('FRONTEND','BACKEND')]) for index,row in enumerate(m.get('routes',[]))] for m in models}
-        return dict(route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        return dict(route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
@@ -232,12 +236,18 @@ class ServiceManager:
         other=bindings(extra)
         insertions={};tls_add={};tail=[];claimed=[];warnings=[]
         def add(index,model,kind,body):insertions.setdefault(index,[]).append(block(model['id'],kind,body))
-        def listener(model,port,tls):
+        def listener(model,port,tls,http_redirect=False):
+            from .preserve import resolve_https
+            resolved=resolve_https(model,parsed+other) if tls and PRESETS[model['protocol']][3]=='http' else None
+            layered=bool(resolved and resolved[2])
+            if resolved:
+                model['listener_port']=resolved[1]['lo'];model['route_port']=model['port'] if 'accept-proxy' in resolved[1]['line'].split() else resolved[1]['lo'];port=resolved[1]['lo']
             hits=[(s,b) for s in parsed+other for b in s['binds'] if b['lo']<=port<=b['hi'] and overlaps(model['bind_address'],b['host'])]
+            if resolved:hits=[(resolved[0],resolved[1])]
             if not hits:
                 for s in claimed:
                     if s['port']==port and overlaps(s['address'],model['bind_address']):
-                        if PRESETS[model['protocol']][3]=='http' and s['http'] and tls==s['tls']:return s['name']
+                        if (http_redirect or PRESETS[model['protocol']][3]=='http') and s['http'] and tls==s['tls']:return s['name']
                         if model.get('sni_routing') and not s['http'] and tls==s['tls'] and all(m.get('sni_routing') for m in s['models']):return s['name']
                         raise ValueError('Порт '+str(port)+' уже используется другим сервисом мастера.')
                 if probe and not any(b['lo']<=port<=b['hi'] and overlaps(model['bind_address'],b['host']) for b in (owned_bindings or [])):
@@ -248,16 +258,16 @@ class ServiceManager:
                             sock.bind(('0.0.0.0' if model['bind_address']=='*' else model['bind_address'],port))
                     except OSError:raise ValueError('Порт '+str(port)+' занят другим процессом или IP недоступен на этом сервере.')
                 name='studio_fe_'+model['id']+'_'+str(port)
-                claimed.append(dict(name=name,port=port,address=model['bind_address'],tls=tls,http=PRESETS[model['protocol']][3]=='http',models=[],redirects=[]))
+                claimed.append(dict(name=name,port=port,address=model['bind_address'],tls=tls,http=http_redirect or PRESETS[model['protocol']][3]=='http',models=[],redirects=[]))
                 return name
             if any(s in other for s,b in hits):raise ValueError('Порт '+str(port)+' описан в дополнительном .cfg. Мастер не меняет этот файл: выберите свободный порт.')
             names=set(s['name'] for s,b in hits)
             if len(names)!=1:raise ValueError('Несколько входов используют порт '+str(port)+'. Выберите отдельный порт.')
             section=hits[0][0]
-            compatible_http=PRESETS[model['protocol']][3]=='http' and section['mode']=='http'
+            compatible_http=(http_redirect or PRESETS[model['protocol']][3]=='http') and section['mode']=='http'
             compatible_sni=model.get('sni_routing') and section['mode']=='tcp'
             if not (compatible_http or compatible_sni) or any(b['tls']!=tls for s,b in hits):raise ValueError('Порт '+str(port)+' уже занят несовместимым входом '+section['name']+'. Выберите другой внешний порт.')
-            if model['bind_address'] in ('*','0.0.0.0','::') and all(b['host'] not in ('*','0.0.0.0','::') for s,b in hits):raise ValueError('Вход на этом порту доступен только на отдельном IP. Укажите тот же IP или свободный порт.')
+            if not layered and model['bind_address'] in ('*','0.0.0.0','::') and all(b['host'] not in ('*','0.0.0.0','::') for s,b in hits):raise ValueError('Вход на этом порту доступен только на отдельном IP. Укажите тот же IP или свободный порт.')
             if compatible_sni:
                 if model['protocol'] in ('rdgateway','rdweb'):
                     if not any(re.match(r'\s*tcp-request inspect-delay\b',line) for _,line in section['lines']):raise ValueError('Для общего TLS-входа нужен tcp-request inspect-delay. Настройте его перед публикацией SNI или выберите отдельный IP/порт.')
@@ -269,18 +279,18 @@ class ServiceManager:
             return section['name']
         def route(model,redirect=False):
             from .enterprise import http_route,tcp_route
-            return tcp_route(model) if model.get('sni_routing') else http_route(model,redirect)
+            return tcp_route(model) if model.get('sni_routing') and not redirect else http_route(model,redirect)
         def attach(model,name,redirect=False):
             owned=next((s for s in claimed if s['name']==name),None)
             if owned:
                 owned['redirects' if redirect else 'models'].append(model);return
             section=next(s for s in parsed if s['name']==name)
             # Inject before any request or routing rules, after bind/mode declarations.
-            index=next((i for i,line in section['lines'] if re.match(r'\s*(http-request|use_backend|default_backend|redirect)\b',line) or model.get('sni_routing') and re.match(r'\s*tcp-request content accept\b',line)),section['start']+1)
+            index=next((i for i,line in section['lines'] if re.match(r'\s*(?:http-request\s+(?:deny|allow|redirect|auth|tarpit|return|use-service)|use_backend|default_backend|redirect)\b',line) or model.get('sni_routing') and re.match(r'\s*tcp-request content accept\b',line)),section['lines'][-1][0]+1 if section['lines'] else section['start']+1)
             add(index,model,'redirect' if redirect else 'route',route(model,redirect))
             if model['tls_mode']=='terminate' and not redirect:
                 for b in section['binds']:
-                    if b['lo']<=model['port']<=b['hi']:
+                    if b['lo']<=model.get('listener_port',model['port'])<=b['hi']:
                         tokens=b['line'].split();existing=[tokens[i+1] for i,t in enumerate(tokens[:-1]) if t=='crt']
                         for certificate in model.get('certificates',[model['certificate']]):
                             path=str(self.certificate_path(certificate))
@@ -290,6 +300,7 @@ class ServiceManager:
             http=PRESETS[model['protocol']][3]=='http'
             if model['tls_mode']=='terminate':self.certificate_check(model)
             for prior in active[:i]:
+                if prior['port']==model['port'] and overlaps(prior['bind_address'],model['bind_address']) and bool(model.get('sni_routing'))!=bool(prior.get('sni_routing')) and set(prior.get('domains') or [prior['domain']]) & set(model.get('domains') or [model['domain']]):raise ValueError('Домен пересекается с HTTP/SNI-публикацией на этом внешнем порту. Сначала согласуйте перенос существующего сервиса.')
                 if http and PRESETS[prior['protocol']][3]=='http' and prior['port']==model['port'] and overlaps(prior['bind_address'],model['bind_address']) and set(prior.get('domains') or [prior['domain']]) & set(model.get('domains') or [model['domain']]) and (prior['path']=='/' or model['path']=='/' or prior['path']==model['path'] or prior['path'].startswith(model['path']+'/') or model['path'].startswith(prior['path']+'/')):raise ValueError('Домен, порт и путь пересекаются с сервисом «'+prior['name']+'».')
                 if model.get('sni_routing'):
                     sameport=prior['port']==model['port'] and overlaps(prior['bind_address'],model['bind_address'])
@@ -300,8 +311,10 @@ class ServiceManager:
             name=listener(model,model['port'],model['tls_mode']=='terminate')
             if http:
                 attach(model,name)
-                if model['redirect']:attach(model,listener(model,model['http_port'],False),True)
-            elif model.get('sni_routing'):attach(model,name)
+                if model['redirect']:attach(model,listener(model,model['http_port'],False,True),True)
+            elif model.get('sni_routing'):
+                attach(model,name)
+                if model.get('redirect'):attach(model,listener(model,model['http_port'],False,True),True)
             else:next(s for s in claimed if s['name']==name)['models'].append(model)
             if model['upstream_tls'] and not model['upstream_verify']:warnings.append('«'+model['name']+'»: проверка сертификата внутреннего сервера отключена.')
             if model['path']!='/':warnings.append('Путь '+model['path']+' имеет приоритет перед ручными маршрутами этого домена. Остальные пути сохраняются.')
@@ -354,27 +367,30 @@ class ServiceManager:
 
     def backend(self,m):
         from .enterprise import backends
-        return backends(self,m)
+        return '' if m.get('http_action')=='redirect' else backends(self,m)
 
     def _backend_base(self,m):
         http=PRESETS[m['protocol']][3]=='http';mode='http' if http else 'tcp'
-        s='backend studio_be_'+m['id']+'\n    mode '+mode+'\n    balance '+m['balance']+'\n    timeout connect 5s\n    timeout server '+str(m['timeout'])+'s\n    timeout tunnel '+str(m['timeout'])+'s\n'
+        s='backend studio_be_'+m['id']+'\n    mode '+mode+'\n    balance '+m['balance']+'\n    timeout connect 5s\n    timeout server '+str(m['timeout'])+'s\n    timeout tunnel '+str(m.get('tunnel_timeout',m['timeout']))+'s\n'
         if m['protocol']=='rds' and m.get('rds_mode')=='token':
             s+='    persist rdp-cookie\n'
+        forwarded_port='%[ssl_fc,iif('+str(m['port'])+','+str(m['http_port'])+')]' if m.get('listener_port',m['port'])!=m['port'] else '%[dst_port]'
         if http:
-            s+='    option forwardfor\n    http-request set-header X-Forwarded-Proto '+'%[ssl_fc,iif(https,http)]'+'\n    http-request set-header X-Forwarded-Port %[dst_port]\n    http-request set-header X-Forwarded-Host %[req.hdr(Host)]\n'
+            if m.get('cookie_name'):s+='    cookie '+m['cookie_name']+' insert nocache\n'
+            if m.get('backend_forwardfor') and not m.get('forward_headers',True):s+='    option forwardfor\n'
+            if m.get('forward_headers',True):s+='    option forwardfor\n    http-request set-header X-Forwarded-Proto '+'%[ssl_fc,iif(https,http)]'+'\n    http-request set-header X-Forwarded-Port '+forwarded_port+'\n    http-request set-header X-Forwarded-Host %[req.hdr(Host)]\n'
             if m['host_override']:s+='    http-request set-header Host '+m['host_override']+'\n'
             if m['strip_prefix']:s+='    http-request replace-path ^'+re.escape(m['path'])+'/?(.*)$ /\\1\n'
             if m['hsts']:s+='    http-response set-header Strict-Transport-Security max-age=31536000\n'
             if m['health']=='http':
-                s+='    option httpchk\n    http-check send meth '+m.get('health_method','GET')+' uri '+m['health_path']+' ver HTTP/1.1 hdr Host '+m['domain']+'\n'
+                s+='    option httpchk\n    http-check send meth '+m.get('health_method','GET')+' uri '+m['health_path']+' ver HTTP/'+m.get('health_http_version','1.1')+(' hdr Host '+m.get('health_host',m['domain']) if m.get('health_host',m['domain']) else '')+'\n'
                 status=m.get('health_status','2xx3xx')
                 s+=('    http-check expect rstatus ^[23][0-9][0-9]$\n' if status=='2xx3xx' else '    http-check expect status '+status+'\n')
             if m.get('security_headers'):s+='    http-response set-header X-Frame-Options SAMEORIGIN\n    http-response set-header X-Content-Type-Options nosniff\n'
         if m['health']=='smtp':s+='    option smtpchk EHLO '+m.get('smtp_ehlo','haproxy-check')+'\n'
         if m.get('health_log'):s+='    option log-health-checks\n'
         ca=None
-        if m['upstream_tls'] and m['upstream_verify']:
+        if m['upstream_tls'] and m['upstream_verify'] or m.get('health_tls_verify'):
             ca=self.engine.settings.get('ca_bundle')
             if not ca or ca=='auto':ca=next((p for p in ('/etc/ssl/certs/ca-certificates.crt','/etc/pki/tls/certs/ca-bundle.crt') if Path(p).is_file()),None)
             if not ca or not Path(ca).is_file() or re.search(r'[\s#\\]',ca):raise ValueError('Для проверки TLS внутреннего сервера настройте ca_bundle или установите системные CA-сертификаты.')
@@ -382,12 +398,16 @@ class ServiceManager:
             s+='    server node'+str(i+1)+' '+address(server['host'],server['port'])+' weight '+str(server['weight'])
             if server['backup']:s+=' backup'
             if m['health']!='none':s+=' check inter '+str(m['check_interval'])+'s fall '+str(m.get('check_fall',3))+' rise '+str(m.get('check_rise',2))
-            if m['health']=='tls' and not m['upstream_tls']:s+=' check-ssl verify none'
+            if m['health']=='tls' and not m['upstream_tls']:
+                s+=' check-ssl verify '+('required ca-file '+ca+' verifyhost '+m['health_tls_name']+' check-sni '+m['health_tls_name'] if m.get('health_tls_verify') else 'none')
+            if m.get('health_send_proxy'):s+=' check-send-proxy'
+            if m.get('cookie_name'):s+=' cookie '+server['cookie_value']
             if m['maxconn']:s+=' maxconn '+str(m['maxconn'])
             if m['proxy_protocol']:s+=' send-proxy-v2'
             if m['upstream_tls']:
                 s+=' ssl verify '+('required ca-file '+ca if m['upstream_verify'] else 'none')
-                if m['upstream_name']:s+=' sni str('+m['upstream_name']+') check-sni '+m['upstream_name']+(' verifyhost '+m['upstream_name'] if m['upstream_verify'] else '')
+                if m.get('upstream_tls_version'):s+=' ssl-min-ver '+m['upstream_tls_version']+' ssl-max-ver '+m['upstream_tls_version']
+                if m.get('upstream_sni',True) and m['upstream_name']:s+=' sni str('+m['upstream_name']+') check-sni '+m['upstream_name']+(' verifyhost '+m['upstream_name'] if m['upstream_verify'] else '')
             s+='\n'
         return s
 
@@ -403,7 +423,8 @@ class ServiceManager:
             models=[m for m in models if m['id']!=identifier];summary=['Удалить публикацию «'+existing['name']+'». Внутренний сервер и сертификат не удаляются.']
         else:
             if action!='upsert':raise ValueError('Неизвестное действие.')
-            model=self.normalize(data,identifier or secrets.token_hex(8));models=[m for m in models if m['id']!=model['id']]+[model]
+            model=self.normalize(data,identifier or secrets.token_hex(8))
+            models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
             label=PRESETS[model['protocol']][0]
             summary=[('Изменить' if existing else 'Опубликовать')+' «'+model['name']+'»: '+label+'.',('Домен '+model['domain']+model['path']+', ' if model['domain'] else '')+'внешний TCP-порт '+str(model['port'])+'.','Серверы: '+', '.join(address(s['host'],s['port']) for s in model['backends'])+'.']
             if not model['enabled']:summary.append('Публикация будет выключена. Её порт и маршруты не активируются.')
