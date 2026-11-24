@@ -240,6 +240,9 @@ class ServiceManager:
         def add(index,model,kind,body):insertions.setdefault(index,[]).append(block(model['id'],kind,body))
         def listener(model,port,tls,http_redirect=False):
             from .preserve import resolve_https
+            if model.get('tcp_frontend') and not http_redirect:
+                target=next((s for s in parsed if s['name']==model['tcp_frontend'] and s['mode']=='tcp'),None)
+                if not target or not any(b['lo']<=port<=b['hi'] and b['tls']==tls and overlaps(model['bind_address'],b['host']) for b in target['binds']):raise ValueError('Существующий TCP-вход не соответствует выбранным порту, адресу или TLS. Сначала согласуйте изменение входа в конфигурации.')
             resolved=resolve_https(model,parsed+other) if tls and PRESETS[model['protocol']][3]=='http' else None
             layered=bool(resolved and resolved[2])
             if resolved:
@@ -268,7 +271,8 @@ class ServiceManager:
             section=hits[0][0]
             compatible_http=(http_redirect or PRESETS[model['protocol']][3]=='http') and section['mode']=='http'
             compatible_sni=model.get('sni_routing') and section['mode']=='tcp'
-            if not (compatible_http or compatible_sni) or any(b['tls']!=tls for s,b in hits):raise ValueError('Порт '+str(port)+' уже занят несовместимым входом '+section['name']+'. Выберите другой внешний порт.')
+            compatible_tcp=model.get('tcp_frontend')==section['name'] and section['mode']=='tcp' and not any(re.match(r'\s*default_backend\b',line) for _,line in section['lines'])
+            if not (compatible_http or compatible_sni or compatible_tcp) or any(b['tls']!=tls for s,b in hits):raise ValueError('Порт '+str(port)+' уже занят несовместимым входом '+section['name']+'. Выберите другой внешний порт.')
             if not layered and model['bind_address'] in ('*','0.0.0.0','::') and all(b['host'] not in ('*','0.0.0.0','::') for s,b in hits):raise ValueError('Вход на этом порту доступен только на отдельном IP. Укажите тот же IP или свободный порт.')
             if compatible_sni:
                 if model['protocol'] in ('rdgateway','rdweb'):
@@ -281,6 +285,7 @@ class ServiceManager:
             return section['name']
         def route(model,redirect=False):
             from .enterprise import http_route,tcp_route
+            if model.get('tcp_frontend') and not redirect:return '    default_backend studio_be_'+model['id']+'\n'
             return tcp_route(model) if model.get('sni_routing') and not redirect else http_route(model,redirect)
         def attach(model,name,redirect=False):
             owned=next((s for s in claimed if s['name']==name),None)
@@ -302,6 +307,7 @@ class ServiceManager:
             http=PRESETS[model['protocol']][3]=='http'
             if model['tls_mode']=='terminate':self.certificate_check(model)
             for prior in active[:i]:
+                if model.get('tcp_frontend') and model.get('tcp_frontend')==prior.get('tcp_frontend'):raise ValueError('Для TCP-входа уже задан основной сервис.')
                 if prior['port']==model['port'] and overlaps(prior['bind_address'],model['bind_address']) and bool(model.get('sni_routing'))!=bool(prior.get('sni_routing')) and set(prior.get('domains') or [prior['domain']]) & set(model.get('domains') or [model['domain']]):raise ValueError('Домен пересекается с HTTP/SNI-публикацией на этом внешнем порту. Сначала согласуйте перенос существующего сервиса.')
                 if http and PRESETS[prior['protocol']][3]=='http' and prior['port']==model['port'] and overlaps(prior['bind_address'],model['bind_address']) and set(prior.get('domains') or [prior['domain']]) & set(model.get('domains') or [model['domain']]) and (prior['path']=='/' or model['path']=='/' or prior['path']==model['path'] or prior['path'].startswith(model['path']+'/') or model['path'].startswith(prior['path']+'/')):raise ValueError('Домен, порт и путь пересекаются с сервисом «'+prior['name']+'».')
                 if model.get('sni_routing'):
@@ -314,7 +320,7 @@ class ServiceManager:
             if http:
                 attach(model,name)
                 if model['redirect']:attach(model,listener(model,model['http_port'],False,True),True)
-            elif model.get('sni_routing'):
+            elif model.get('sni_routing') or model.get('tcp_frontend'):
                 attach(model,name)
                 if model.get('redirect'):attach(model,listener(model,model['http_port'],False,True),True)
             else:next(s for s in claimed if s['name']==name)['models'].append(model)

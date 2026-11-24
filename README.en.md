@@ -15,7 +15,7 @@ Version 0.4 adds password changes, administrator/viewer accounts, named certific
 
 ## HAProxy compatibility and readiness
 
-Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 30 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
+Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 31 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
 
 Version 0.5.1 adds `--check` for non-mutating diagnostics and `Type=notify` readiness. Reinstall the unit and restart the service after updating; `enable --now` does not restart an already running process. See the [Russian troubleshooting guide](docs/installation.ru.md).
 
@@ -120,3 +120,5 @@ Version 0.6 adds separate RD Gateway and RD Web Access HTTPS/443 templates using
 Version 0.7 adds typed compatibility controls for reviewed migrations of existing publications into Services: local HTTPS termination behind a TCP/SNI bridge, legacy redirects and path matching, server cookies, health-check HTTP/Host/TLS/PROXY settings and separate tunnel timeouts. Editing keeps service order. This does not automatically import arbitrary configurations; review the migration and validate routing before applying it. [Russian service guide](docs/services.ru.md).
 
 Version 0.7.1 shows service names and backend addresses in monitoring. Service health aggregates the default pool when used and all backend route pools, including Exchange checks. Partial availability is reported separately; redirect-only HTTP services show a configured redirect instead of waiting for backend data. Technical HAProxy names remain unchanged. [Status meanings and update steps (Russian)](docs/services.ru.md#названия-серверов-и-статусы-мониторинга).
+
+Version 0.8 adds **Services → Import configuration**: analyze the current main configuration or upload a file, select recognized publications and rename them, then validate and review the diff before applying. Supports simple HTTP/HTTPS, SNI, TCP default pools and HTTP redirects; complex rules remain manual with reasons. File upload replaces the main configuration after separate acknowledgement; certificates and external files are not copied. [Russian import guide and recognition limits](docs/import.ru.md).

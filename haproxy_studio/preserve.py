@@ -21,6 +21,8 @@ def location(value):
 def normalize(manager,data,m):
     from .services import PRESETS,number,hostname
     http=PRESETS[m['protocol']][3]=='http'
+    m['tcp_frontend']=token(data.get('tcp_frontend',''),'TCP-вход')
+    if m['tcp_frontend'] and http:raise ValueError('TCP-вход доступен только для TCP/TLS-сервиса.')
     m['https_frontend']=token(data.get('https_frontend',''),'HTTPS-вход')
     if m['https_frontend'] and not (http and m['tls_mode']=='terminate'):raise ValueError('Выбор внутреннего HTTPS-входа доступен только для HTTPS-сервиса.')
     m['forward_headers']=data.get('forward_headers',True) is True

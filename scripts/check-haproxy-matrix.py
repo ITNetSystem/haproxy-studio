@@ -39,6 +39,7 @@ def generate(root):
     save('preserve-tls-check-and-redirect',[data('tls',port=443,sni_routing=True,sni_domains='app.example.test',redirect=True,http_redirect_mode='scheme',proxy_protocol=True,health='tls',health_tls_verify=True,health_tls_name='app.example.test',health_send_proxy=True)])
     layered=BASE+'frontend public_tls\n    bind 0.0.0.0:443\n    mode tcp\n    default_backend bridge\nbackend bridge\n    mode tcp\n    server local 127.0.0.1:8443 send-proxy-v2\nfrontend local_tls\n    bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert)+'\n    mode http\n    http-request set-header X-Forwarded-Proto https\n    http-request deny deny_status 421\n'
     save('preserve-layered-https',[data('https',https_frontend='local_tls',forward_headers=False)],layered)
+    save('imported-tcp-fallback',[data('tcp',port=2222,tcp_frontend='legacy_tcp',forward_headers=False,health='tcp')],BASE+'frontend legacy_tcp\n    bind 0.0.0.0:2222\n    mode tcp\n    option tcplog\n')
     return count
 
 def main():
