@@ -286,7 +286,11 @@ class Engine:
             info, rows = {}, []
             warning = 'Runtime API недоступен. Проверьте путь к socket, права доступа и службу HAProxy.'
         allowed = ('Version', 'Uptime', 'CurrConns', 'CumConns', 'ConnRate', 'Maxconn', 'Nbthread')
-        return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=sections(raw), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
+        from .services import clean
+        from .monitoring import annotate
+        parsed=sections(raw)
+        annotate(rows,parsed,clean(raw)[1])
+        return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
 
     def history(self):
         backups = [json.loads(p.read_text()) for p in sorted((self.state / 'backups').glob('*/meta.json'), reverse=True)][:50]
