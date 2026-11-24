@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 from urllib.parse import urlsplit
+from . import __version__
 from .core import Engine, Conflict, mask
 from .resources import Resources
 from .accounts import Accounts
@@ -165,7 +166,7 @@ class Application:
                     file = STATIC / names[suffix]
                     content = file.read_bytes()
                     if suffix == '/':
-                        content = content.replace(b'__BASE__', base.encode())
+                        content = content.replace(b'__BASE__', base.encode()).replace(b'__VERSION__', __version__.encode())
                     return self.reply(200, content, mimetypes.guess_type(file)[0] or 'application/octet-stream')
                 return self.reply(404, dict(error='Страница не найдена.'))
             def do_POST(self):
