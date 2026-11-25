@@ -288,11 +288,11 @@ class Engine:
         allowed = ('Version', 'Uptime', 'CurrConns', 'CumConns', 'ConnRate', 'Maxconn', 'Nbthread')
         from .services import clean
         from .monitoring import annotate
-        from .routing import describe
+        from .routing import describe,publications
         models=clean(raw)[1]
         parsed=describe(raw,sections(raw),models)
         annotate(rows,parsed,models)
-        return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
+        return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
 
     def history(self):
         backups = [json.loads(p.read_text()) for p in sorted((self.state / 'backups').glob('*/meta.json'), reverse=True)][:50]

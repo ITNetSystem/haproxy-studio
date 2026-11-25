@@ -40,7 +40,7 @@ def describe(raw,sections,models):
         else:section['display_name']='Вход TCP'+(' / TLS' if tls else '')+(' · '+port if port else '')
         for route in section['routes']:
             target=named.get(route['backend']);model,specific=pools.get(route['backend'],(None,None))
-            card=dict(kind='proxy',name=model['name'] if model else target.get('display_name',route['backend']) if target else route['backend'],domains=model.get('domains') or ([model['domain']] if model.get('domain') else []) if model else [],path=specific['path'] if specific else model.get('path','/') if model else '',destination=', '.join(s['address'] for s in target['servers']) if target else '',line=route['line'],technical_backend=route['backend'],technical_condition=route['condition'],condition='')
+            card=dict(service_id=model['id'] if model else None,kind='proxy',name=model['name'] if model else target.get('display_name',route['backend']) if target else route['backend'],domains=model.get('domains') or ([model['domain']] if model.get('domain') else []) if model else [],path=specific['path'] if specific else model.get('path','/') if model else '',destination=', '.join(s['address'] for s in target['servers']) if target else '',line=route['line'],technical_backend=route['backend'],technical_condition=route['condition'],condition='')
             if model:
                 if not route['condition']:card['condition']='Все подключения' if len(section['routes'])==1 and not model.get('sni_routing') else 'Остальные подключения (по умолчанию)'
                 elif model.get('sni_routing'):card['condition']='По имени TLS (SNI)'
@@ -73,7 +73,7 @@ def describe(raw,sections,models):
         section=named[section_name]
         model=by_id[identifier];domains=model.get('domains') or ([model['domain']] if model.get('domain') else [])
         def add(kind,path,destination,condition):
-            section['route_cards'].append(dict(kind=kind,name=model['name'],domains=domains,path=path,destination=destination,condition=condition,line=line,technical_backend='',technical_condition='Блок сервиса '+model['id']+' · '+phase))
+            section['route_cards'].append(dict(service_id=model['id'],kind=kind,name=model['name'],domains=domains,path=path,destination=destination,condition=condition,line=line,technical_backend='',technical_condition='Блок сервиса '+model['id']+' · '+phase))
         if phase=='redirect' or model.get('http_action')=='redirect':
             add('redirect',model['path'] if not model.get('http_redirect_all_paths') else '/',model.get('http_redirect_location') or 'HTTPS того же домена','HTTP → HTTPS · код '+str(model.get('redirect_code',301)) if not model.get('http_redirect_location') else 'Перенаправление · код '+str(model.get('redirect_code',301)))
             continue
@@ -86,3 +86,35 @@ def describe(raw,sections,models):
     # Keep the same ordering as the actual configuration, including generated actions.
     for section in sections:section['route_cards'].sort(key=lambda card:card['line'])
     return sections
+
+
+def publications(models,rows,sections):
+    """Service-centric view: public address -> application, with infrastructure separate."""
+    from .services import PRESETS,address
+    from .monitoring import service_status
+    result=[]
+    for model in models:
+        kind=PRESETS[model['protocol']][3];domains=model.get('domains') or ([model['domain']] if model.get('domain') else [])
+        web=kind=='http';scheme='https' if model['tls_mode']=='terminate' else 'http'
+        if web:
+            source=[scheme+'://'+domain+(':'+str(model['port']) if model['port']!=(443 if scheme=='https' else 80) else '')+(model['path'] if model['path']!='/' else '') for domain in domains]
+            connection='HTTPS' if scheme=='https' else 'HTTP'
+        else:
+            source=[domain+':'+str(model['port']) for domain in domains] if domains else [address(model['bind_address'],model['port']) if model['bind_address']!='*' else 'Адрес HAProxy · порт '+str(model['port'])]
+            connection=PRESETS[model['protocol']][0]
+        runtime_pool=[r for r in rows if r['pxname']==backend_name(model) and r['svname'] not in ('FRONTEND','BACKEND')]
+        routes=[dict(action=r['action'],rows=[entry for entry in rows if entry['pxname']==backend_name(model,r) and entry['svname'] not in ('FRONTEND','BACKEND')]) for r in model.get('routes',[])]
+        cards=[dict(card,entrance=s['display_name'],technical_frontend=s['name']) for s in sections for card in s.get('route_cards',[]) if card.get('service_id')==model['id']]
+        from .naming import names as pool_names
+        actual_pools=[] if model.get('fallback_status') and model.get('routes') else [model['backends']]
+        actual_pools.extend(route['backends'] for route in model.get('routes',[]) if route['action']=='backend')
+        actual_servers=[server for pool in actual_pools for server in pool]
+        destinations=list(dict.fromkeys(address(server['host'],server['port']) for server in actual_servers))
+        server_labels=[];seen=set()
+        for pool in actual_pools:
+            for i,server in enumerate(pool):
+                item=(server.get('name','node'+str(i+1)),address(server['host'],server['port']))
+                if item not in seen:server_labels.append(dict(name=item[0],address=item[1]));seen.add(item)
+        if model.get('http_action')=='redirect':destinations=[model.get('http_redirect_location') or 'HTTPS того же домена'];connection='HTTP-перенаправление'
+        result.append(dict(id=model['id'],name=model['name'],connection=connection,source=source,port=model['port'],destinations=destinations,status=service_status(model,runtime_pool,routes),enabled=model['enabled'],rules=cards,backend_names=pool_names(model),servers=server_labels))
+    return result

@@ -32,3 +32,16 @@ class RoutingTests(ServicesFixture):
         checked,draft=self.preview(self.data('tls',port=18443,sni_routing=True,sni_domains='app.example.test',sni_default=True));self.assertTrue(checked['ok']);cards=[c for s in self.describe(draft['raw']) for c in s['route_cards'] if c['technical_backend'].startswith('studio_be_')];self.assertTrue(any(c['condition']=='По имени TLS (SNI)' for c in cards));self.assertTrue(any(c['condition']=='Остальные подключения (по умолчанию)' for c in cards))
     def test_http_exception_shows_its_actual_paths(self):
         checked,draft=self.preview(self.data(http_exceptions=['/health'],redirect=True));self.assertTrue(checked['ok']);cards=[c for s in self.describe(draft['raw']) for c in s['route_cards']];self.assertTrue(any(c['kind']=='proxy' and c['path']=='/health' and 'без перенаправления' in c['condition'] for c in cards))
+    def test_publication_uses_public_port_and_all_domains_instead_of_tls_bridge(self):
+        from haproxy_studio.routing import publications
+        checked,draft=self.preview(self.data(name='Файлы',aliases=['other.example.test']));self.assertTrue(checked['ok']);models=clean(draft['raw'])[1];parsed=self.describe(draft['raw']);items=publications(models,[],parsed)
+        self.assertEqual(1,len(items));self.assertEqual(['https://app.example.test','https://other.example.test'],items[0]['source']);self.assertEqual(443,items[0]['port']);self.assertEqual(['192.0.2.15:80'],items[0]['destinations']);self.assertTrue(all(r['service_id']==models[0]['id'] for r in items[0]['rules']))
+    def test_publication_destinations_use_actual_path_pools_not_unused_parent(self):
+        from haproxy_studio.routing import publications
+        checked,draft=self.preview(self.data('exchange',routes=[dict(path='/owa',action='backend',backends=[dict(host='192.0.2.33',port=443)],inherit_pool=False)],fallback_status=503));self.assertTrue(checked['ok'],checked['output']);models=clean(draft['raw'])[1];item=publications(models,[],self.describe(draft['raw']))[0];self.assertEqual(['192.0.2.33:443'],item['destinations']);self.assertEqual(1,len(item['backend_names']));self.assertEqual('192.0.2.33:443',item['servers'][0]['address'])
+    def test_duplicate_display_names_do_not_mix_publication_rules(self):
+        from haproxy_studio.routing import publications
+        checked,first=self.preview(self.data('http',name='Сайт',domain='one.example.test'));self.config.write_bytes(first['raw']);checked,second=self.preview(self.data('http',name='Сайт',domain='two.example.test'));self.assertTrue(checked['ok']);models=clean(second['raw'])[1];items=publications(models,[],self.describe(second['raw']));self.assertEqual(2,len(items));self.assertTrue(all(all(r['service_id']==item['id'] for r in item['rules']) for item in items))
+    def test_legacy_route_server_names_use_pool_local_indexes(self):
+        from haproxy_studio.routing import publications
+        checked,draft=self.preview(self.data('exchange',fallback_status=503));self.assertTrue(checked['ok']);item=publications(clean(draft['raw'])[1],[],self.describe(draft['raw']))[0];self.assertEqual([dict(name='node1',address='192.0.2.15:443')],item['servers'])
