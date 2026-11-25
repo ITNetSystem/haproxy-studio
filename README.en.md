@@ -1,5 +1,10 @@
 # HAProxy Studio
 
+
+## Existing HAProxy infrastructure
+
+Version 0.12 adds baseline/candidate diagnostics, a self-publication preset, RD Web redirects terminated at HAProxy, reviewed certificate rotation, and read-only discovery with partial pool address editing. See [the detailed Russian guide and limitations](docs/infrastructure-testing.ru.md). Arbitrary ACLs/shared pools are retained rather than approximated by the full importer; AWS-LC behavior is covered by simulated-build tests, not a native AWS-LC integration run.
+
 [Русская инструкция — основной README](README.md)
 
 Self-hosted Russian-language administration interface for an existing HAProxy.
@@ -15,7 +20,7 @@ Version 0.4 adds password changes, administrator/viewer accounts, named certific
 
 ## HAProxy compatibility and readiness
 
-Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 34 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
+Write mode accepts stable HAProxy 2.4–3.4. Syntax is tested against the 2.4, 2.6, 2.8, 3.0, 3.2 and 3.4 branches using `python3 scripts/check-haproxy-matrix.py`. The matrix validates 36 synthetic configurations; it does not prove end-to-end RDS/Exchange behavior or each distribution integration. Every apply still validates with the installed binary.
 
 Version 0.5.1 adds `--check` for non-mutating diagnostics and `Type=notify` readiness. Reinstall the unit and restart the service after updating; `enable --now` does not restart an already running process. See the [Russian troubleshooting guide](docs/installation.ru.md).
 

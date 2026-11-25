@@ -58,7 +58,7 @@ def describe(raw,sections,models):
     # their own block. Resolve both so redirects never disappear from the overview.
     text=decode(raw);exposures={}
     for match in BLOCK.finditer(text):
-        if match[2] not in ('route','redirect') or match[1] not in by_id:continue
+        if match[2] not in ('route','redirect','policy') or match[1] not in by_id:continue
         line=text.count('\n',0,match.start())+1
         section=next((s for i,s in enumerate(sections) if s['type'] in ('frontend','listen') and s['line']<line<(sections[i+1]['line'] if i+1<len(sections) else len(text.splitlines())+1)),None)
         if section is not None:exposures[(section['name'],match[1],match[2])]=line
@@ -70,6 +70,7 @@ def describe(raw,sections,models):
             phase='redirect' if model.get('redirect') and any(b['lo']==model['http_port'] and not b['tls'] for b in spec.get('binds',[])) else 'route'
             exposures.setdefault((section['name'],model['id'],phase),section['line']+1)
     for (section_name,identifier,phase),line in exposures.items():
+        if phase=='route' and (section_name,identifier,'policy') in exposures:continue
         section=named[section_name]
         model=by_id[identifier];domains=model.get('domains') or ([model['domain']] if model.get('domain') else [])
         def add(kind,path,destination,condition):
@@ -102,7 +103,7 @@ def publications(models,rows,sections):
         else:
             source=[domain+':'+str(model['port']) for domain in domains] if domains else [address(model['bind_address'],model['port']) if model['bind_address']!='*' else 'Адрес HAProxy · порт '+str(model['port'])]
             connection=PRESETS[model['protocol']][0]
-        if model['protocol'] in ('rdweb','rdgateway') and domains:
+        if model['protocol'] in ('rdweb','rdgateway','rdwebproxy') and domains:
             from .rdweb import path as portal_path
             source=['https://'+domain+(':'+str(model['port']) if model['port']!=443 else '')+portal_path(model) for domain in domains]
         runtime_pool=[r for r in rows if r['pxname']==backend_name(model) and r['svname'] not in ('FRONTEND','BACKEND')]

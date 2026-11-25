@@ -104,3 +104,5 @@ class RdsHttpsTests(ServicesFixture):
         self.assertEqual(strip(standard['raw']),strip(html5['raw']))
     def test_old_rdweb_default_selection_does_not_cause_noop_reload(self):
         checked,draft=self.preview(self.data('rdweb'));self.assertTrue(checked['ok']);self.config.write_bytes(draft['raw']);model=clean(draft['raw'])[1][0];model['rdweb_client']='standard';checked,again=self.preview(model);self.assertFalse(checked['changed']);self.assertEqual(draft['raw'],again['raw'])
+    def test_rdweb_can_redirect_plain_http_to_the_selected_portal(self):
+        checked,draft=self.preview(self.data('rdweb',rdweb_client='standard',redirect=True,http_redirect_location='https://app.example.test/RDWeb/',redirect_code=302));self.assertTrue(checked['ok'],checked['output']);self.assertIn(b'http-request redirect location https://app.example.test/RDWeb/ code 302',draft['raw']);self.assertIn(b'req.ssl_sni',draft['raw']);self.assertNotIn(b'ssl crt ',draft['raw'])

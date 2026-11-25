@@ -128,11 +128,21 @@ class Application:
             def do_GET(self):
                 self.guarded(self.get)
             def get(self):
+                origin=app.settings['public_url']
+                host=urlsplit(origin).netloc
                 path = urlsplit(self.path).path
                 if path == base + '/api/health':
                     return self.reply(200, dict(ok=True))
                 if self.headers.get('Host') != host:
                     return self.reply(403, dict(error='Адрес не совпадает с public_url.'))
+                if base and path == base:
+                    query=urlsplit(self.path).query
+                    self.send_response(302)
+                    self.send_header('Location',base+'/' + ('?'+query if query else ''))
+                    self.send_header('Content-Length','0')
+                    self.send_header('Cache-Control','no-store')
+                    self.end_headers()
+                    return
                 key, session = self.session()
                 if path == base + '/api/session':
                     return self.reply(200, dict(authenticated=bool(session), csrf=session['csrf'] if session else None, user=session['user'] if session else None))
@@ -172,8 +182,12 @@ class Application:
             def do_POST(self):
                 self.guarded(self.post)
             def post(self):
+                origin=app.settings['public_url']
+                host=urlsplit(origin).netloc
                 if self.headers.get('Host') != host or self.headers.get('Origin') != origin:
                     return self.reply(403, dict(error='Откройте панель по её основному адресу.'))
+                origin=app.settings['public_url']
+                host=urlsplit(origin).netloc
                 path = urlsplit(self.path).path
                 value = self.data()
                 if path == base + '/api/login':
@@ -224,8 +238,14 @@ class Application:
                     user = app.accounts.manage(session['user']['id'], value)
                     app.engine.audit('user-' + value.get('action', 'create'), username=user['username'])
                     return self.reply(200, dict(ok=True, users=app.accounts.list()))
+                if path == base + '/api/certificates/preview-replace':
+                    checked,draft=app.resources.replace_certificate(value)
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/certificates/manage':
                     return self.reply(200, app.resources.manage_certificate(value))
+                if path == base + '/api/backends/preview-edit':
+                    checked,draft=app.resources.edit_pool(value)
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/backends/preview-delete':
                     checked, draft = app.resources.delete_backend(value)
                     return self.reply(200, app.store_draft(checked, draft, key))
@@ -235,6 +255,9 @@ class Application:
                     if path.endswith('/scan'):return self.reply(200, importer.scan(value))
                     checked,draft=importer.preview(value)
                     return self.reply(200, app.store_draft(checked,draft,key))
+                if path == base + '/api/compatibility/preview':
+                    checked,draft=app.engine.compatibility_preview(value.get('revision'))
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/services/names/preview':
                     checked,draft=app.services.preview_names(value.get('revision'))
                     return self.reply(200, app.store_draft(checked,draft,key))

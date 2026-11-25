@@ -18,7 +18,9 @@ PRESETS = {
     'http': ('Сайт HTTP',80,80,'http','plain','Обычный сайт без TLS. Для публичного сайта лучше HTTPS.'),
     'websocket': ('WebSocket / веб-приложение',443,80,'http','terminate','HTTPS с поддержкой долгих WebSocket-соединений.'),
     'rdgateway': ('RDS: RD Gateway — шлюз HTTPS',443,443,'tcp','passthrough','Внешний RDP через HTTPS до Windows RD Gateway. Сквозной TLS, сертификат на Windows; TCP/443, без публикации UDP/3391.'),
-    'rdweb': ('RDS: RD Web Access — портал HTTPS',443,443,'tcp','passthrough','Веб-портал RDS: обычная страница или HTML5-клиент. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
+    'rdweb': ('RDS: RD Web — сквозной TLS до IIS',443,443,'tcp','passthrough','Веб-портал RDS: обычная страница или HTML5-клиент. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
+    'rdwebproxy': ('RDS: RD Web — редирект на HAProxy',443,443,'http','terminate','Сертификат на HAProxy, перенаправление корня на /RDWeb/ или HTML5. HTTPS до IIS. Для RD Gateway используйте отдельный сквозной TLS-сервис.'),
+    'studio': ('HAProxy Studio — эта панель',443,9130,'http','terminate','Публикация панели с сертификатом HAProxy, корневым редиректом и завершающим слешем. Предложит сменить public_url после применения.'),
     'rds': ('RDS: прямой RDP через брокер (3389)',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
     'rdp': ('Удалённый рабочий стол RDP',3389,3389,'tcp','plain','Прозрачная передача RDP. Шифрование и учётные записи на Windows-сервере.'),
     'ssh': ('SSH',22,22,'tcp','plain','Прозрачная передача SSH. Выберите свободный внешний порт, например 2222.'),
@@ -130,6 +132,13 @@ class ServiceManager:
         if protocol=='exchange':
             data=dict(data)
             for key,value in dict(upstream_tls=True,health='http',health_path='/owa/healthcheck.htm',timeout=3600).items():data.setdefault(key,value)
+        if protocol in ('rdwebproxy','studio'):
+            data=dict(data)
+            if protocol=='rdwebproxy':
+                for key,value in dict(upstream_tls=True,health='http',health_path='/RDWeb/',balance='source').items():data.setdefault(key,value)
+            else:
+                base_path=self.engine.settings['base_path'] or '/'
+                for key,value in dict(path=base_path,backends=[dict(host={'0.0.0.0':'127.0.0.1','::':'::1'}.get(self.engine.settings['bind'],self.engine.settings['bind']),port=self.engine.settings['port'])],root_redirect=base_path.rstrip('/')+'/',redirect_root=True,canonical_slash=base_path!='/',health='http',health_path=base_path.rstrip('/')+'/api/health',strip_prefix=False).items():data.setdefault(key,value)
         if protocol=='rds':
             data=dict(data)
             data.setdefault('balance','leastconn')
@@ -148,7 +157,7 @@ class ServiceManager:
         mode=data.get('tls_mode',preset[4]);http=preset[3]=='http'
         allowed=('plain','terminate') if http else (('passthrough','terminate') if protocol in ('smtps','imaps','pop3s','tls','rdgateway','rdweb') else ('plain',))
         if mode not in allowed:raise ValueError('Выбранный TLS-режим несовместим с протоколом. RDP, SSH и STARTTLS передаются прозрачно.')
-        if protocol in ('https','websocket','exchange') and mode!='terminate':raise ValueError('Для HTTPS выберите TLS-терминацию. Для сквозного TLS используйте шаблон TLS-сервис.')
+        if protocol in ('https','websocket','exchange','rdwebproxy','studio') and mode!='terminate':raise ValueError('Для HTTPS выберите TLS-терминацию. Для сквозного TLS используйте шаблон TLS-сервис.')
         if protocol in ('rdgateway','rdweb') and mode!='passthrough':raise ValueError('RD Gateway / RD Web в этом шаблоне используют сквозной TLS до Windows. Сертификат устанавливается на Windows-сервере.')
         if protocol=='http' and mode!='plain':raise ValueError('Для защищённого сайта используйте шаблон HTTPS.')
         public=data.get('bind_address','*')
@@ -226,13 +235,27 @@ class ServiceManager:
 
     def catalog(self):
         raw,revision=self.engine.snapshot();base,models=clean(raw)
-        rows=self.engine.overview()['rows'] if models else []
+        rows=self.engine.overview()['rows']
         runtime={m['id']:[row for row in rows if row['pxname']==backend_name(m) and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
         from .enterprise import route_key
         route_runtime={m['id']:[dict(path=row['path'],action=row['action'],rows=[entry for entry in rows if entry['pxname']==backend_name(m,row) and entry['svname'] not in ('FRONTEND','BACKEND')]) for index,row in enumerate(m.get('routes',[]))] for m in models}
         from .monitoring import service_status
         statuses={m['id']:service_status(m,runtime[m['id']],route_runtime[m['id']]) for m in models}
-        return dict(service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        from .resources import Resources
+        pools={b['name']:b for b in Resources(self.engine).backends()['backends']}
+        from .discovery import discover
+        inventory_raw=b'';source_spans=[];offset=1
+        for file in self.engine.config_files():
+            content=file.read_bytes()
+            if not content.endswith(b'\n'):content+=b'\n'
+            end=offset+len(content.splitlines())-1
+            source_spans.append((offset,end,file.name));offset=end+1;inventory_raw+=content
+        from .diagnostics import compatibility,ssl_issues
+        diagnostic={}
+        if not self.engine.settings['read_only']:
+            build=compatibility(self.engine.settings['haproxy_binary'],self.engine.command)
+            diagnostic=dict(validation=self.engine.validate(raw),ssl_library=build['ssl_library'],ssl_issues=ssl_issues(raw,build))
+        return dict(diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']]['blocked'])) for item in discover(inventory_raw,rows,source_spans)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
@@ -246,7 +269,7 @@ class ServiceManager:
                 if name.lower() in used:raise ValueError('Имя backend уже используется: '+name+'. Выберите другое имя в настройках сервиса.')
                 used.add(name.lower())
         insertions={};tls_add={};tail=[];claimed=[];warnings=[]
-        def add(index,model,kind,body):insertions.setdefault(index,[]).append(block(model['id'],kind,body))
+        def add(index,model,kind,body):insertions.setdefault(index,[]).append((1 if kind=='route' else 0,block(model['id'],kind,body)))
         def listener(model,port,tls,http_redirect=False):
             from .preserve import resolve_https
             if model.get('tcp_frontend') and not http_redirect:
@@ -303,14 +326,36 @@ class ServiceManager:
             section=next(s for s in parsed if s['name']==name)
             # Inject before any request or routing rules, after bind/mode declarations.
             index=next((i for i,line in section['lines'] if re.match(r'\s*(?:http-request\s+(?:deny|allow|redirect|auth|tarpit|return|use-service)|use_backend|default_backend|redirect)\b',line) or model.get('sni_routing') and re.match(r'\s*tcp-request content accept\b',line)),section['lines'][-1][0]+1 if section['lines'] else section['start']+1)
-            add(index,model,'redirect' if redirect else 'route',route(model,redirect))
+            body=route(model,redirect)
+            if section['mode']=='http':
+                policy=''.join(line for line in body.splitlines(True) if not line.lstrip().startswith(('use_backend ','default_backend ')))
+                choices=''.join(line for line in body.splitlines(True) if line.lstrip().startswith(('use_backend ','default_backend ')))
+                # Insert policy before all HTTP request rules; choices before the first manual backend choice.
+                policy_index=next((i for i,line in section['lines'] if re.match(r'\s*(?:http-request\s+(?:deny|allow|redirect|auth|tarpit|return|use-service)|redirect|use_backend|default_backend)\b',line)),index)
+                if policy:add(policy_index,model,'redirect' if redirect else 'policy',policy)
+                if choices:
+                    choice_index=next((i for i,line in section['lines'] if re.match(r'\s*(?:use_backend|default_backend)\b',line)),section['lines'][-1][0]+1 if section['lines'] else section['start']+1)
+                    add(choice_index,model,'route',choices)
+            else:add(index,model,'redirect' if redirect else 'route',body)
             if model['tls_mode']=='terminate' and not redirect:
                 for b in section['binds']:
                     if b['lo']<=model.get('listener_port',model['port'])<=b['hi']:
                         tokens=b['line'].split();existing=[tokens[i+1] for i,t in enumerate(tokens[:-1]) if t=='crt']
                         for certificate in model.get('certificates',[model['certificate']]):
                             path=str(self.certificate_path(certificate))
-                            if path not in existing and str(Path(path).parent) not in existing:tls_add.setdefault(b['index'],set()).add(path)
+                            if path not in existing and str(Path(path).parent) not in existing:
+                                from .certificate_info import metadata,overlap
+                                incoming=metadata(self.engine,Path(path))
+                                for reference in existing:
+                                    file=Path(reference)
+                                    if not file.is_absolute():
+                                        crt_base=next((line.strip().split(None,1)[1] for line in base.splitlines() if line.strip().startswith('crt-base ')),'/etc/ssl/private');file=Path(crt_base)/file
+                                    files=sorted(file.glob('*.pem')) if file.is_dir() else [file]
+                                    for previous in files:
+                                        if not previous.is_file():continue
+                                        previous_info=metadata(self.engine,previous)
+                                        if incoming['fingerprint']!=previous_info['fingerprint'] and incoming['key_algorithm']==previous_info['key_algorithm'] and any(overlap(a,d) for a in incoming['domains'] for d in previous_info['domains']):raise ValueError('Сертификат '+certificate+' пересекается с '+previous.name+' того же типа ключа на входе '+section['name']+'. HAProxy может выдать старый сертификат. Сначала замените используемый сертификат с резервной копией; новый дубликат не добавлен.')
+                                tls_add.setdefault(b['index'],set()).add(path)
         active=[m for m in models if m['enabled']]
         for i,model in enumerate(active):
             http=PRESETS[model['protocol']][3]=='http'
@@ -345,8 +390,9 @@ class ServiceManager:
                 if http:body+=' alpn h2,http/1.1'
             body+='\n    mode '+('http' if http else 'tcp')+'\n    timeout client '+str(first['timeout'])+'s\n'
             if http:
-                for m in spec['redirects']:body+=route(m,True)
-                for m in spec['models']:body+=route(m)
+                rules=''.join(route(m,True) for m in spec['redirects'])+''.join(route(m) for m in spec['models'])
+                body+=''.join(line for line in rules.splitlines(True) if not line.lstrip().startswith(('use_backend ','default_backend ')))
+                body+=''.join(line for line in rules.splitlines(True) if line.lstrip().startswith(('use_backend ','default_backend ')))
             else:
                 body+='    option tcplog\n'
                 if first['protocol']=='rds' and first.get('rds_mode')=='token':
@@ -371,12 +417,12 @@ class ServiceManager:
             tail.append(block(model['id'],'model',body))
         out=[]
         for index,line in enumerate(lines):
-            out.extend(insertions.get(index,[]))
+            out.extend(value for _,value in sorted(insertions.get(index,[]),key=lambda pair:pair[0]))
             if index in tls_add:
                 rendered=line.rstrip('\r\n')+' '+ ' '.join('crt '+p for p in sorted(tls_add[index]))+'\n'
                 out.append('    # studio-tls-base '+packed(dict(line=line,hash=hashlib.sha256(encode(rendered)).hexdigest()))+'\n');out.append(rendered)
             else:out.append(line)
-        out.extend(insertions.get(len(lines),[]))
+        out.extend(value for _,value in sorted(insertions.get(len(lines),[]),key=lambda pair:pair[0]))
         # No separator is introduced: removing generated blocks restores baseline bytes exactly.
         if tail and out and not out[-1].endswith('\n'):raise ValueError('Последняя строка конфигурации должна завершаться переводом строки.')
         out.extend(tail)
@@ -455,6 +501,7 @@ class ServiceManager:
             base=references(base,changes(existing,model))
         candidate,warnings=self.render(base,models,probe,owned)
         checked=self.engine.validate(candidate)
+        checked['baseline']=self.engine.validate(raw)
         import difflib
         checked.update(changed=candidate!=raw,diff=''.join(difflib.unified_diff(mask(raw)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Мастер публикации')),summary=summary,warnings=list(dict.fromkeys(warnings))+['Проверьте DNS и доступность внешнего порта в сети или у провайдера.'])
         if action!='delete':
@@ -486,7 +533,15 @@ class ServiceManager:
             if model.get('aliases'):checked['summary'].append('Дополнительные домены: '+', '.join(model['aliases'])+'.')
             if model.get('sni_routing'):checked['summary'].append('Общий TLS-порт, маршрутизация по SNI: '+', '.join(model['domains'])+'.')
             if model.get('routes'):checked['summary'].append('Маршруты по путям: '+str(len(model['routes']))+'; запрещённые пути отвечают 403.')
-        return checked,dict(raw=candidate,revision=revision,reason='service:'+action)
+        draft=dict(raw=candidate,revision=revision,reason='service:'+action)
+        if action!='delete':
+            from .selfpublish import prepare
+            change=prepare(self.engine,model,data)
+            if change:
+                draft['studio_origin']=change
+                checked['changed']=True
+                checked['summary'].append('После успешного применения public_url → '+change['origin']+'. Войдите по новому адресу; старый адрес больше не принимается.')
+        return checked,draft
 
     def preview_names(self,revision):
         if self.engine.settings['read_only']:raise ValueError('Переименование недоступно в режиме наблюдения.')

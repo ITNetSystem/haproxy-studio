@@ -12,16 +12,17 @@ def haproxy_version(binary):
     if not binary:
         return dict(version=None,supported=False,message='HAProxy не найден. В режиме наблюдения это допустимо; для управления задайте haproxy_binary.')
     try:
-        result=subprocess.run([binary,'-v'],capture_output=True,timeout=10,check=False)
+        result=subprocess.run([binary,'-vv'],capture_output=True,timeout=10,check=False)
     except (OSError,subprocess.SubprocessError):
         return dict(version=None,supported=False,message='Не удалось запустить HAProxy: проверьте haproxy_binary и права на исполняемый файл.')
     text=(result.stdout+result.stderr).decode('utf-8','replace')
     match=re.search(r'HAProxy version (\d+)\.(\d+)\.(\d+)([^\s]*)',text)
     if result.returncode or not match:
-        return dict(version=None,supported=False,message='Не удалось определить версию HAProxy через -v.')
+        return dict(version=None,supported=False,message='Не удалось определить версию HAProxy через -vv.')
     version=tuple(map(int,match.group(1,2,3)));label='.'.join(map(str,version))+match[4]
     supported=MINIMUM<=version[:2]<=MAXIMUM and not re.search(r'dev|rc',match[4],re.I)
-    return dict(version=label,supported=supported,message='Ветка проверяется матрицей совместимости.' if supported else 'Режим управления поддерживает стабильные HAProxy 2.4–3.4. Для этой версии оставьте read_only: true.')
+    library=next((line.strip() for line in text.splitlines() if re.search(r'(?:Built|Running) (?:with|on).*(?:OpenSSL|AWS-LC|LibreSSL|BoringSSL)',line,re.I)),'SSL-библиотека не определена')
+    return dict(version=label,supported=supported,ssl_library=library,message='Ветка проверяется матрицей совместимости.' if supported else 'Режим управления поддерживает стабильные HAProxy 2.4–3.4. Для этой версии оставьте read_only: true.')
 
 def require_compatible(binary):
     result=haproxy_version(binary)
@@ -33,6 +34,7 @@ def diagnostics(settings):
     state=Path(settings['state_dir'])
     print('Режим: '+('наблюдение' if settings['read_only'] else 'управление'))
     print('HAProxy: '+(result['version'] or 'не определён')+' — '+result['message'])
+    print('SSL: '+result.get('ssl_library','не определена'))
     print('Основной конфиг: '+str(settings['config_file'])+' — '+('существует' if Path(settings['config_file']).is_file() else 'НЕ НАЙДЕН'))
     print('Каталог данных: '+str(state))
     print('Начальный пароль: '+str(state/'initial-password')+' — '+('файл существует (после смены пароль в нём устарел)' if (state/'initial-password').is_file() else 'файла нет; при первом запуске создаётся автоматически'))

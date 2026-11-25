@@ -51,4 +51,5 @@ def load(path=None):
     if not isinstance(result["base_path"], str) or not result["base_path"].startswith("/") or any(x in result["base_path"] for x in ("..", "?", "#", ";")):
         raise ValueError("Invalid base_path")
     result["base_path"] = result["base_path"].rstrip("/")
+    if path:result["_config_path"]=str(Path(path).resolve())
     return result

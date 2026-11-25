@@ -19,8 +19,11 @@ class Resources:
 
     def certificates(self, readonly=False):
         result = self.engine.certificates()
+        from .certificate_info import overlap
         for cert in result['certificates']:
+            cert['overlaps']=[dict(name=other['name'],key_algorithm=other['key_algorithm'],expired=other['expired'],same_key_type=cert['key_algorithm']==other['key_algorithm']) for other in result['certificates'] if other['name']!=cert['name'] and any(overlap(a,b) for a in cert['domains'] for b in other['domains'])]
             cert['used_by'] = self.certificate_references(cert['name'])
+        result['revision']=self.engine.snapshot()[1]
         result['read_only'] = readonly or self.engine.settings['read_only']
         return result
 
@@ -165,3 +168,55 @@ class Resources:
             checked=self.engine.validate(raw,changes)
             checked.update(changed=True,diff='\n'.join(diffs),summary=['Удалить backend '+item['name'],('Перенаправить '+str(len(item['references']))+' правил на '+replacement['name']) if replacement else 'Удалить связанных правил: '+str(len(item['references']))],warnings=[] if replacement or not item['references'] else ['После удаления правил запросы без другого подходящего маршрута могут получить ошибку 503.'])
             return checked,dict(raw=raw,files=changes,revision=catalog['revision'],reason='backend-delete')
+
+    def replace_certificate(self,value):
+        """Preview replacing a referenced PEM without appending ambiguous SNI certs."""
+        if self.engine.settings['read_only']:raise ValueError('Изменения отключены.')
+        from .services import ServiceManager
+        manager=ServiceManager(self.engine)
+        original=manager.certificate_path(value.get('name'))
+        replacement=manager.certificate_path(value.get('replacement'))
+        if original==replacement:raise ValueError('Выберите другой, уже загруженный сертификат.')
+        if original.is_symlink() or replacement.is_symlink():raise ValueError('Символические ссылки сертификатов нельзя заменять из панели.')
+        raw,revision=self.engine.snapshot()
+        if value.get('revision')!=revision:raise Conflict('Конфигурация изменилась. Повторите просмотр.')
+        # Existing domains must remain covered; rotation must not drop other tenants.
+        from .certificate_info import metadata
+        old=metadata(self.engine,original);new=metadata(self.engine,replacement)
+        for domain in old['domains']:
+            if domain.startswith('*.'):
+                if domain not in new['domains']:raise ValueError('Новый сертификат не сохраняет wildcard '+domain+'.')
+            elif self.engine.command(['openssl','x509','-in',str(replacement),'-noout','-checkhost',domain]).returncode:raise ValueError('Новый сертификат не покрывает '+domain+'.')
+        if not new['readable'] or new['expired'] or new['not_yet_valid']:raise ValueError('Новый сертификат не действует.')
+        # SSLContext validates the leaf/private-key pair without exposing either.
+        import ssl
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:context.load_cert_chain(str(replacement))
+        except (OSError,ssl.SSLError):raise ValueError('Сертификат и приватный ключ нового PEM не проходят проверку.')
+        before=original.read_bytes();after=replacement.read_bytes()
+        candidate=raw.replace(str(original).encode(),str(replacement).encode())
+        checked=self.engine.validate(candidate)
+        checked.update(changed=before!=after,baseline=self.engine.validate(raw),diff='Заменить содержимое '+original.name+' сертификатом '+replacement.name+'. Приватный ключ и PEM в diff не выводятся.',summary=['Атомарная замена сертификата '+original.name+'. Старый PEM будет сохранён в резервной копии.','SHA-256: '+old['fingerprint']+' → '+new['fingerprint']],warnings=['Затрагиваются: '+', '.join(sorted({r.get('section',r.get('reason','')) for r in self.certificate_references(original.name)})),'После reload проверяется fingerprint на доступных локальных bind с прямым crt или каталогом crt, включая accept-proxy. Для crt-list и внешнего DNS/NAT дополнительно проверьте публичный SNI вручную.'])
+        return checked,dict(raw=raw,revision=revision,reason='certificate-replace',certificate_change=dict(target=str(original),previous=before,replacement=after))
+
+    def edit_pool(self,value):
+        """Partial management: edit address/port only, preserve every other byte."""
+        if self.engine.settings['read_only']:raise ValueError('Изменения отключены.')
+        from .services import hostname,number,address
+        catalog=self.backends()
+        if value.get('revision')!=catalog['revision']:raise Conflict('Конфигурация изменилась. Повторите проверку.')
+        item=next((b for b in catalog['backends'] if b['id']==value.get('id')),None)
+        if not item or item['blocked']:raise ValueError(item['blocked'] if item else 'Backend не найден.')
+        source=self.sources()[Path(item['file'])];body=source[item['start']:item['end']]
+        servers=list(re.finditer(r'(?m)^(\s*server\s+([A-Za-z0-9_.:-]+)\s+)([^\s#]+)',body))
+        submitted=value.get('servers')
+        if not isinstance(submitted,list) or len(submitted)!=len(servers) or not servers:raise ValueError('Состав серверов изменился или имеет неподдерживаемый синтаксис. Обновите список.')
+        for match,row in reversed(list(zip(servers,submitted))):
+            if not isinstance(row,dict) or row.get('name')!=match[2]:raise ValueError('Имена и порядок серверов должны оставаться прежними.')
+            endpoint=address(hostname(row.get('host')),number(row.get('port'),'Порт сервера'))
+            body=body[:match.start(3)]+endpoint+body[match.end(3):]
+        candidate=encode(source[:item['start']]+body+source[item['end']:]);changes={item['file']:candidate}
+        raw=candidate if Path(item['file'])==self.engine.config else self.engine.config.read_bytes()
+        checked=self.engine.validate(raw,changes)
+        checked.update(changed=candidate!=encode(source),baseline=self.engine.validate(self.engine.config.read_bytes()),diff=''.join(difflib.unified_diff(mask(encode(source))[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile=item['source'],tofile=item['source']+' (новые адреса)')),summary=['Изменить адреса серверов общего backend '+item['name']+'. Остальные директивы, комментарии и порядок правил сохраняются.'],warnings=['Затрагиваются все использующие пул входы: '+', '.join(sorted({r['section'] for r in item['references']}))])
+        return checked,dict(raw=raw,files=changes,revision=catalog['revision'],reason='pool-edit')

@@ -66,7 +66,8 @@ def normalize(manager,data,m):
     m['redirect_root']=data.get('redirect_root',False) is True
     m['canonical_slash']=data.get('canonical_slash',False) is True
     m['reject_other_paths']=data.get('reject_other_paths',False) is True
-    if (m['redirect_root'] or m['canonical_slash'] or m['reject_other_paths']) and (not http or m['path']=='/'):raise ValueError('Настройки ограниченного пути требуют веб-сервис с путём, отличным от /.')
+    if m['redirect_root'] and (not http or not m.get('root_redirect')):raise ValueError('Для корневого перенаправления задайте адрес назначения веб-сервиса.')
+    if (m['canonical_slash'] or m['reject_other_paths']) and (not http or m['path']=='/'):raise ValueError('Настройки ограниченного пути требуют веб-сервис с путём, отличным от /.')
     m['imported']=data.get('imported',False) is True
     return m
 

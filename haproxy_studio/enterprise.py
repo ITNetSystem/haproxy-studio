@@ -54,6 +54,7 @@ def normalize(manager,data,m):
             if url.scheme not in ('https','http') or not url.hostname or url.username or url.password or url.fragment or re.search(r'[\s#%\\]',target):raise ValueError('Перенаправление: путь /owa или полный адрес https://mail.example.org/owa.')
             hostname(url.hostname,'Домен перенаправления')
             if url.port is not None:number(url.port,'Порт перенаправления')
+    if http and target=='/':raise ValueError('Корень / нельзя перенаправлять на самого себя.')
     m['root_redirect']=target if http else ''
     exceptions=data.get('http_exceptions',[])
     if isinstance(exceptions,str):exceptions=[x for x in re.split(r'[\s,;]+',exceptions.strip()) if x]
@@ -118,13 +119,20 @@ def path_acl(name,prefix,ignore=False):
     if prefix!='/':result+='    acl '+name+' path_beg '+flag+prefix+'/\n'
     return result
 
+def location_redirect(target,condition):
+    # Fixed locations do not preserve query strings in HAProxy. Keep them explicitly,
+    # without evaluating request input as configuration or changing the target host.
+    suffix='&' if '?' in target else '?'
+    return ('    http-request redirect location '+target+suffix+'%[query] code 302 if '+condition+' { query -m len gt 0 }\n'
+            +'    http-request redirect location '+target+' code 302 if '+condition+'\n')
+
 def http_route(m,redirect=False):
     ident='st_'+m['id'];conditions=[ident+'_host','{ dst_port '+str(m['http_port'] if redirect else m.get('route_port',m['port']))+' }']
     fetch='hdr(host)' if (redirect or m['tls_mode']=='plain') and m.get('http_host_match')=='raw' else 'hdr(host),lower,field(1,:)'
     body='    acl '+ident+'_host '+fetch+' -i '+' '.join(model_domains(m))+'\n'
     host_condition=' '.join(conditions)
-    if not redirect and m.get('canonical_slash'):body+='    http-request redirect location '+m['path']+'/ code 302 if '+host_condition+' { path '+m['path']+' }\n'
-    if not redirect and m.get('redirect_root') and m.get('root_redirect'):body+='    http-request redirect location '+m['root_redirect']+' code 302 if '+host_condition+' { path / }\n'
+    if not redirect and m.get('canonical_slash'):body+=location_redirect(m['path']+'/',host_condition+' { path '+m['path']+' }')
+    if not redirect and m.get('redirect_root') and m.get('root_redirect'):body+=location_redirect(m['root_redirect'],host_condition+' { path / }'+(' { method GET HEAD }' if m['protocol'] in ('rdwebproxy','studio') else ''))
     if m['path']!='/' and not (redirect and m.get('http_redirect_all_paths')):body+=path_acl(ident+'_path',m['path'],m.get('path_ignore_case'));conditions.append(ident+'_path')
     condition=' '.join(conditions)
     if m['allowed_ips']:body+='    http-request deny deny_status 403 if '+condition+' !{ src '+m['allowed_ips']+' }\n'
@@ -141,7 +149,7 @@ def http_route(m,redirect=False):
         origin='https://'+(model_domains(m)[0] if len(model_domains(m))==1 else '%[req.hdr(host),field(1,:)]')+(':'+str(m['port']) if m['port']!=443 else '')
         body+='    http-request redirect prefix '+origin+' code '+str(m.get('redirect_code',301))+' if '+condition+(' !'+ident+'_exception' if exceptions else '')+'\n'
         return body
-    if m.get('root_redirect') and not m.get('redirect_root'):body+='    http-request redirect location '+m['root_redirect']+' code 302 if '+condition+' { path / }\n'
+    if m.get('root_redirect') and not m.get('redirect_root'):body+=location_redirect(m['root_redirect'],host_condition+' { path / }'+(' { method GET HEAD }' if m['protocol'] in ('rdwebproxy','studio') else ''))
     routes=sorted(enumerate(m.get('routes',[])),key=lambda pair:-len(pair[1]['path']))
     for index,row in routes:
         acl=ident+'_r'+route_key(m,row);body+=('    acl '+acl+' path_beg '+('-i ' if m.get('path_ignore_case') else '')+row['path']+'\n' if row.get('match')=='prefix' else path_acl(acl,row['path'],m.get('path_ignore_case')))

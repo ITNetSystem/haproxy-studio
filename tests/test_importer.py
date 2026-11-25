@@ -22,6 +22,11 @@ class ImportTests(ServicesFixture):
         self.assertEqual(1,len(report['candidates']),report);checked,draft=self.preview_import(value,report,names={report['candidates'][0]['id']:'Сайт компании'})
         self.assertTrue(checked['ok'],checked['output']);self.assertEqual(source,self.config.read_bytes());self.assertIn(b'backend untouched\n    mode http\n    server old 192.0.2.99:80\n',draft['raw']);self.assertNotIn(b'backend website\n',draft['raw'])
         self.config.write_bytes(draft['raw']);model=clean(draft['raw'])[1][0];self.assertEqual('Сайт компании',model['name']);self.assertEqual('original',model['backends'][0]['name']);checked,edited=self.preview(model);self.assertTrue(checked['ok']);self.assertEqual(draft['raw'],edited['raw'])
+    def test_inline_and_backend_comments_survive_import(self):
+        source=self.manual().replace(b'acl site hdr',b'acl site hdr').replace(b'-i app.example.test\n',b'-i app.example.test # domain explanation\n').replace(b'    server original',b'    # server explanation\n    server original').replace(b'check inter 5s\n',b'check inter 5s # check explanation\n')
+        value,report=self.scan(source);self.assertEqual(1,len(report['candidates']),report)
+        checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok'],checked['output'])
+        for comment in (b'# domain explanation',b'# server explanation',b'# check explanation'):self.assertIn(comment,draft['raw'])
     def test_https_uses_existing_certificate_and_listener(self):
         value,report=self.scan(self.manual(tls=True));self.assertEqual(1,len(report['candidates']),report);checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok'],checked['output']);self.assertEqual(1,draft['raw'].count(b'bind 127.0.0.1:18443'))
     def test_sni_import_preserves_tcp_inspection_and_backend_tls(self):

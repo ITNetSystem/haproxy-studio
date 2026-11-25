@@ -90,3 +90,7 @@ HTTP-исключения и HTTP-перенаправления, огранич
 - [Microsoft: роли RDS, RD Gateway и RD Web](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/rds-roles).
 - [Microsoft: порты RDS, TCP/443 и UDP/3391](https://learn.microsoft.com/en-us/troubleshoot/windows-server/remote/ports-used-by-rds).
 - [Microsoft: балансировка RD Web и Gateway](https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/rds-rdweb-gateway-ha).
+
+## Перенаправление корня RD Web на HAProxy
+
+В 0.12 доступен отдельный тип «RDS: RD Web — редирект на HAProxy» с TLS-терминацией и автоматическим переходом к обычному порталу или HTML5. См. [настройку и отличия от сквозного RD Gateway](infrastructure-testing.ru.md#rd-web-редирект-выполняет-haproxy).

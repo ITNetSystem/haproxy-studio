@@ -104,20 +104,27 @@ class Engine:
         try:
             with os.fdopen(fd, 'wb') as stream:
                 stream.write(raw)
-            args = [self.settings['haproxy_binary'], '-c', '-f', name]
+            args = [self.settings['haproxy_binary'], '-c', '-V', '-f', name]
             if self.extra and self.extra.is_dir():
                 args += ['-f', str(self.extra)]
             completed = self.command(args)
-            # HAProxy may quote the whole offending line. Never expose raw diagnostics.
-            if completed.returncode == 0:
-                output = 'Синтаксис и зависимости конфигурации проверены HAProxy.'
-            else:
-                diagnostic = (completed.stdout + completed.stderr).decode('utf-8', 'replace')
-                line_numbers = sorted(set(re.findall(r':(\d+)\]', diagnostic)), key=int)
-                output = 'HAProxy отклонил конфигурацию.' + (' Проверьте строки: ' + ', '.join(line_numbers) + '.' if line_numbers else ' Проверьте синтаксис и доступность файлов сертификатов.')
-            return dict(ok=completed.returncode == 0, output=output)
+            from .diagnostics import result
+            return result(completed, raw, dict({str(file):file.read_bytes() for file in self.config_files()[1:]},**{name:raw}))
         finally:
             Path(name).unlink(missing_ok=True)
+
+    def compatibility_preview(self,revision):
+        from .diagnostics import compatibility,ssl_issues
+        raw,actual=self.snapshot()
+        if revision!=actual:raise Conflict('Конфигурация изменилась. Повторите проверку.')
+        build=compatibility(self.settings['haproxy_binary'],self.command)
+        issues=ssl_issues(raw,build)
+        if not issues:raise ValueError('В текущем конфиге нет известных несовместимых DH-директив для этой SSL-библиотеки.')
+        targets={i['line'] for i in issues}
+        candidate=b''.join((b'# studio compatibility: '+line if n in targets else line) for n,line in enumerate(raw.splitlines(True),1))
+        result,draft=self.preview(mask(candidate)[0],revision)
+        result['summary']=['Закомментировать только неподдерживаемые настройки DH для AWS-LC. TLS, сертификаты и наборы шифров сохраняются.']
+        return result,draft
 
     def config_files(self):
         return [self.config] + (sorted(self.extra.glob('*.cfg')) if self.extra and self.extra.is_dir() else [])
@@ -134,13 +141,14 @@ class Engine:
     def validate_files(self, raw, files):
         changes = self.checked_files(files)
         with tempfile.TemporaryDirectory(prefix='.studio-check-', dir=self.config.parent) as folder:
-            args = [self.settings['haproxy_binary'], '-c']
+            args = [self.settings['haproxy_binary'], '-c', '-V']
             for index, file in enumerate(self.config_files()):
                 target = Path(folder) / (str(index) + '.cfg')
                 target.write_bytes(changes.get(file, raw if file == self.config else file.read_bytes()))
                 args += ['-f', str(target)]
             result = self.command(args)
-            return dict(ok=result.returncode == 0, output='Синтаксис и зависимости конфигурации проверены HAProxy.' if result.returncode == 0 else 'HAProxy отклонил конфигурацию. Проверьте зависимости и настройки backend.')
+            from .diagnostics import result as report
+            return report(result,raw,{str(Path(folder)/(str(i)+'.cfg')):changes.get(file,raw if file==self.config else file.read_bytes()) for i,file in enumerate(self.config_files())})
 
     def preview(self, content, revision, backup=None):
         current, actual = self.snapshot()
@@ -163,6 +171,7 @@ class Engine:
             candidate = unmask(content, mask(current)[1])
         result = self.validate(candidate, files) if files else self.validate(candidate)
         old, new = mask(current)[0], mask(candidate)[0]
+        result['baseline']=self.validate(current)
         result.update(diff=''.join(difflib.unified_diff(old.splitlines(True), new.splitlines(True), fromfile='Текущая версия', tofile='Новая версия')), changed=current != candidate)
         for name, raw in files.items():
             previous = Path(name).read_bytes()
@@ -204,7 +213,9 @@ class Engine:
             checked = self.validate(draft['raw'], files) if files else self.validate(draft['raw'])
             if not checked['ok']:
                 raise ValueError(checked['output'])
-            if previous == draft['raw'] and all(originals[p] == raw for p,raw in changes.items()):
+            cert_change=draft.get('certificate_change')
+            if cert_change and (Path(cert_change['target']).is_symlink() or Path(cert_change['target']).read_bytes()!=cert_change['previous']):raise Conflict('Сертификат изменён после проверки.')
+            if not cert_change and not draft.get('studio_origin') and previous == draft['raw'] and all(originals[p] == raw for p,raw in changes.items()):
                 return dict(ok=True, message='Изменений нет. Перезагрузка не нужна.')
             backup = time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(4)
             folder = self.state / 'backups' / backup
@@ -215,18 +226,30 @@ class Engine:
             (folder / 'meta.json').write_text(json.dumps(dict(id=backup, time=time.time(), reason=draft['reason'])))
             if self.snapshot()[1] != revision:
                 raise Conflict('Обнаружено внешнее изменение. Повторите проверку.')
+            if cert_change:(folder/'certificate.pem').write_bytes(cert_change['previous'])
             previous_worker = None
             try:
                 found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
                 previous_worker = found[1] if found else None
             except (OSError, ValueError):
                 pass
+            origin_change=draft.get('studio_origin')
+            if origin_change and Path(origin_change['path']).read_bytes()!=origin_change['previous']:raise Conflict('Настройки Studio изменены после проверки.')
+            if origin_change:(folder/'studio-settings.json').write_bytes(origin_change['previous'])
+            if origin_change and not cert_change and previous==draft['raw'] and all(originals[p]==raw for p,raw in changes.items()):
+                from .selfpublish import install
+                install(self,origin_change)
+                self.audit('studio-origin',backup=backup)
+                return dict(ok=True,message='Публичный адрес Studio обновлён. Конфигурация HAProxy не менялась; reload не требовался.',backup=backup,public_url=self.settings['public_url'])
             recovered = False
             try:
                 self.atomic_write(draft['raw'])
                 for file, raw in changes.items():
                     if file != self.config:
                         self.atomic_write(raw, file)
+                if cert_change:
+                    self.atomic_write(cert_change['replacement'],Path(cert_change['target']))
+                    if not self.validate(draft['raw'])['ok']:raise ValueError('Новая конфигурация сертификата не прошла проверку.')
                 applied = self.command(self.settings['reload_command'], timeout=30).returncode == 0
                 applied = applied and self.command(self.settings['health_command']).returncode == 0
                 if applied and previous_worker and (draft.get('reason', '').startswith('service:') or draft.get('reason') == 'backend-delete'):
@@ -240,9 +263,16 @@ class Engine:
                         if changed: break
                         time.sleep(.15)
                     applied = changed
-            except (OSError, subprocess.SubprocessError):
+                if applied and cert_change:
+                    from .certificate_probe import verify
+                    cert_change['verified_listeners']=verify(self,cert_change)
+                if applied and origin_change:
+                    from .selfpublish import install
+                    install(self,origin_change)
+            except (OSError, ValueError, subprocess.SubprocessError):
                 applied = False
             if not applied:
+                if cert_change:self.atomic_write(cert_change['previous'],Path(cert_change['target']))
                 self.atomic_write(previous)
                 for file, raw in originals.items():
                     if file != self.config:
@@ -253,8 +283,10 @@ class Engine:
                     pass
                 self.audit('apply-failed', backup=backup, recovered=recovered)
                 raise ValueError('Новый файл отклонён. Старый файл восстановлен. ' + ('Служба работает.' if recovered else 'Проверьте службу вручную: восстановительная перезагрузка не подтверждена.'))
-            self.audit('apply', backup=backup)
-            return dict(ok=True, message='Изменения применены. Выполнена плавная перезагрузка HAProxy.', backup=backup)
+            self.audit('apply', backup=backup,certificate_verified_listeners=cert_change.get('verified_listeners',0) if cert_change else None)
+            message='Изменения применены. Выполнена плавная перезагрузка HAProxy.'
+            if cert_change:message+=(' Fingerprint проверен на локальных TLS-входах: '+str(cert_change['verified_listeners'])+'.' if cert_change.get('verified_listeners') else ' Прямые TLS-входы для автоматической проверки не найдены; проверьте публичный SNI вручную.')
+            return dict(ok=True, message=message, backup=backup,public_url=self.settings['public_url'] if origin_change else None)
 
     def runtime(self, command):
         with socket.socket(socket.AF_UNIX) as client:
@@ -310,5 +342,6 @@ class Engine:
                 detail = result.stdout.decode('utf-8', 'replace') if result.returncode == 0 else 'Не удалось прочитать сертификат.'
             except (OSError, subprocess.SubprocessError):
                 detail = 'Для чтения метаданных установите OpenSSL.'
-            items.append(dict(name=file.name, label=labels.get(file.name, file.name), details=detail))
+            from .certificate_info import metadata
+            items.append(dict(name=file.name, label=labels.get(file.name, file.name), details=detail,**metadata(self,file)))
         return dict(certificates=items)

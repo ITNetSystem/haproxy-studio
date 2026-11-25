@@ -46,7 +46,7 @@ def generate(root):
     return count
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--versions',nargs='+',default=['2.4','2.6','2.8','3.0','3.2','3.4']);args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--versions',nargs='+',default=['2.4','2.6','2.8','3.0','3.2','3.3','3.4']);args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='studio-compat-') as folder:
         count=generate(folder)
         def run(version):

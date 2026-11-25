@@ -2,6 +2,7 @@
 import difflib
 import hashlib
 import re
+import shlex
 from pathlib import Path
 from .core import Conflict,encode,mask
 from .services import bindings,clean,PRESETS
@@ -20,9 +21,29 @@ def active(section):
     for index,line in section['lines']:
         text=line.strip()
         if text and not text.startswith('#'):
-            if '#' in text or '\\' in text:raise Unsupported('Комментарии в строке или продолжение директивы требуют ручной проверки.')
-            result.append((index,text.split()))
+            if text.endswith('\\'):raise Unsupported('Секция '+section['name']+', строка '+str(index+1)+': продолжение директивы требует ручной проверки.')
+            if re.search(r'(?<!\\)\$\{?',text):raise Unsupported('Секция '+section['name']+', строка '+str(index+1)+': переменные окружения требуют ручной проверки.')
+            try:parts=shlex.split(text,comments=True,posix=True)
+            except ValueError:raise Unsupported('Секция '+section['name']+', строка '+str(index+1)+': незакрытая кавычка или экранирование.')
+            if parts:result.append((index,parts))
     return result
+
+def _routing_commands(section):
+    # Only backend references matter for dynamic-reference protection. A stats realm
+    # or unrelated unsupported policy cannot block an independent frontend.
+    return active(dict(section,lines=[(i,line) for i,line in section['lines'] if re.match(r'\s*(?:use_backend|default_backend)\b',line)]))
+
+def retained_comment(line):
+    quote=None;escaped=False
+    for index,char in enumerate(line):
+        if escaped:escaped=False;continue
+        if char=='\\':escaped=True;continue
+        if char in ("'",'"'):
+            if quote==char:quote=None
+            elif quote is None:quote=char
+        elif char=='#' and quote is None:
+            return line if not line[:index].strip() else '    '+line[index:]
+    return ''
 
 def endpoint(value):
     match=re.fullmatch(r'(\[[^]]+\]|[^:]+):(\d+)',value)
@@ -125,7 +146,7 @@ class Importer:
                 if len(names[front['name']])!=1:raise Unsupported('Неоднозначное имя frontend.')
                 route_lines=[index for index,p in commands if p[0] in ('use_backend','default_backend')]
                 if route_lines and any(index>min(route_lines) and p[0]=='http-request' for index,p in commands):raise Unsupported('HTTP-действия после маршрутов требуют ручного сохранения порядка.')
-                if any(p[0] in ('use_backend','default_backend') and len(p)>1 and '%' in p[1] for s in parsed for _,p in active(s)):raise Unsupported('Динамический выбор backend требует ручной проверки внешних map-файлов.')
+                if any(p[0] in ('use_backend','default_backend') and len(p)>1 and '%' in p[1] for s in parsed if s['type'] in ('frontend','listen') for _,p in _routing_commands(s)):raise Unsupported('Динамический выбор backend требует ручной проверки внешних map-файлов.')
                 # Only simple name-based routes. Path ACLs, auth, rewrites and terminal policy stay manual.
                 permitted={'bind','mode','log','option','timeout','capture','description','acl','use_backend','default_backend','tcp-request','http-request','http-response'}
                 for _,p in commands:
@@ -174,10 +195,10 @@ class Importer:
                             if len(target)!=1 or target[0]['type']!='backend':raise Unsupported('Backend отсутствует или его имя неоднозначно.')
                             backend=target[0]
                             if backend['mode']!=front['mode']:raise Unsupported('Режимы frontend и backend различаются.')
-                            references=[(s,index) for s in parsed for index,p in active(s) if p[0] in ('use_backend','default_backend') and len(p)>1 and p[1]==r[1]]
+                            references=[(s,index) for s in parsed for index,p in _routing_commands(s) if p[0] in ('use_backend','default_backend') and len(p)>1 and p[1]==r[1]]
                             if len(references)!=1:raise Unsupported('Backend используется несколькими маршрутами; нужен ручной перенос.')
                             # Dynamic expressions/maps may reference the same backend too.
-                            if any(re.search(r'(?<![\w.-])'+re.escape(r[1])+r'(?![\w.-])',' '.join(p)) for s in parsed for index,p in active(s) if p[0] not in ('use_backend','default_backend','description') and s is not backend):raise Unsupported('Backend упоминается в других директивах.')
+                            if any(re.search(r'(?<![\w.-])'+re.escape(r[1])+r'(?![\w.-])',' '.join(p)) for s in parsed for index,p in active(dict(s,lines=[(i,line) for i,line in s['lines'] if r[1] in line and not line.lstrip().startswith('#')])) if p[0] not in ('use_backend','default_backend','description') and s is not backend):raise Unsupported('Backend упоминается в других директивах.')
                             data=pool(self.manager,backend,defaults)
                         protocol='https' if http and bind['tls'] else 'http' if http else 'tcp' if fallback and not bind['tls'] else 'tls'
                         certificate='';certificates=[]
@@ -214,8 +235,9 @@ class Importer:
             if c['id'] in ids:raise ValueError('Публикация уже перенесена.')
             c['model']['name']=renames.get(c['id'],c['name']);c['model']=self.manager.normalize(dict(c['model'],sni_domains=c['model']['domains']),c['id'])
             ids.add(c['id']);removed.update(c['removed'])
-        baseline=''.join(line for i,line in enumerate(base.splitlines(keepends=True)) if i not in removed)
+        baseline=''.join(line if i not in removed else retained_comment(line) for i,line in enumerate(base.splitlines(keepends=True)))
         candidate,notes=self.manager.render(baseline,managed+[c['model'] for c in chosen],probe=False)
         checked=self.engine.validate(candidate)
+        checked['baseline']=self.engine.validate(current)
         checked.update(changed=candidate!=current,diff=''.join(difflib.unified_diff(mask(current)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Импорт публикаций')),summary=['Перенести в «Сервисы»: '+c['model']['name']+'.' for c in chosen],warnings=notes+['Нераспознанные и невыбранные правила сохранены. Проверка синтаксиса не подтверждает полную эквивалентность поведения; проверьте разницу перед применением.']+(['Основной конфиг будет заменён загруженным файлом. Сохранится резервная копия текущего конфига.'] if value.get('source')=='file' else []))
         return checked,dict(raw=candidate,revision=revision,reason='service:import')

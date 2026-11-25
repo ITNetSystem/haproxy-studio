@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/etc/haproxy /var/lib/haproxy-studio
+ReadWritePaths=/etc/haproxy /etc/haproxy-studio /var/lib/haproxy-studio
 
 [Install]
 WantedBy=multi-user.target

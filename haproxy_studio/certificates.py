@@ -16,6 +16,8 @@ def upload(engine,data):
     if not all(isinstance(v,str) for v in (certificate,key,password,label)):raise ValueError('Ожидается PEM-сертификат и приватный ключ.')
     if len(certificate)>524288 or len(key)>524288 or len(password)>1024 or '\n' in password:raise ValueError('Сертификат и ключ — не более 512 КБ каждый; пароль — одна строка до 1024 символов.')
     if not 1<=len(label.strip())<=80 or any(ord(c)<32 for c in label):raise ValueError('Название сертификата: от 1 до 80 обычных символов.')
+    bundle=data.get('ca_bundle','')
+    if not isinstance(bundle,str) or len(bundle)>524288:raise ValueError('CA Bundle должен быть текстовым PEM до 512 КБ.')
     pfx=data.get('pfx_base64','')
     if pfx:
         if not isinstance(pfx,str) or len(pfx)>720000:raise ValueError('PFX/P12 должен быть не больше 512 КБ.')
@@ -31,6 +33,7 @@ def upload(engine,data):
                 converted=subprocess.run(args+['-legacy'],input=(password+'\n').encode(),capture_output=True,timeout=15,check=False)
             if converted.returncode:raise ValueError('Не удалось открыть PFX/P12. Проверьте пароль и наличие сертификата с ключом.')
             certificate=converted.stdout.decode('utf8','replace');key='';password=''
+    certificate+='\n'+bundle
     blocks=re.findall(r'-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----',certificate)
     if not blocks:raise ValueError('Не найден PEM-сертификат. Поддерживаются текстовые PEM/CRT и KEY, бинарный PFX/P12 загружается отдельным файлом; DER преобразуйте в PEM.')
     with tempfile.TemporaryDirectory(prefix='certificate-',dir=engine.state) as temporary:
@@ -52,8 +55,13 @@ def upload(engine,data):
         for block in blocks:
             leaf.write_text(block+'\n')
             if engine.command(['openssl','x509','-in',str(leaf),'-noout']).returncode:raise ValueError('Один из сертификатов цепочки повреждён.')
+        from .chain import check as check_chain
+        warnings=check_chain(engine,folder,blocks)
         combined=('\n'.join(blocks)+'\n').encode()+decrypted.stdout
         directory=Path(engine.settings['certificate_dir']);directory.mkdir(parents=True,exist_ok=True)
+        for previous in directory.glob('*.pem'):
+            if previous.name.startswith('studio-') and not previous.is_symlink() and previous.stat().st_mode&0o777==0o600 and previous.read_bytes()==combined:
+                return dict(ok=True,name=previous.name,label=previous.name,warnings=warnings,message='Такой PEM с ключом и цепочкой уже сохранён: '+previous.name+'. Дубликат не создан.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
         name='studio-'+secrets.token_hex(12)+'.pem';destination=directory/name
         with engine.lock:
             fd=os.open(destination,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
@@ -63,4 +71,4 @@ def upload(engine,data):
             except OSError:
                 destination.unlink(missing_ok=True);raise
         engine.audit('certificate-upload',name=name)
-        return dict(ok=True,name=name,label=label.strip(),message='Сертификат и ключ проверены и сохранены. Сертификат выбран для сервиса.',certificates=engine.certificates()['certificates'])
+        return dict(ok=True,name=name,label=label.strip(),warnings=warnings,message='Сертификат и ключ проверены и сохранены. Сертификат выбран для сервиса.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
