@@ -10,6 +10,7 @@ import ssl
 import time
 from pathlib import Path
 from .core import Conflict, decode, encode, mask
+from .naming import backend_name
 
 PRESETS = {
     'exchange': ('Microsoft Exchange / Outlook',443,443,'http','terminate','OWA, Autodiscover, MAPI, ActiveSync, EWS, RPC, OAB и управляемый доступ к ECP.'),
@@ -208,7 +209,8 @@ class ServiceManager:
             if loop and server['port']==model['port'] and model['bind_address'] in ('*','0.0.0.0','::','127.0.0.1','::1'):raise ValueError('Внешний порт и локальный порт сервера совпадают: получится петля. Выберите другой внешний порт.')
         from .enterprise import normalize
         from .preserve import normalize as preserve
-        return preserve(self,data,normalize(self,data,model))
+        from .naming import normalize as normalize_names
+        return normalize_names(data,preserve(self,data,normalize(self,data,model)))
 
     def certificate_path(self,name):
         if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Выберите сертификат из списка или загрузите PEM/CRT и ключ.')
@@ -224,9 +226,9 @@ class ServiceManager:
     def catalog(self):
         raw,revision=self.engine.snapshot();base,models=clean(raw)
         rows=self.engine.overview()['rows'] if models else []
-        runtime={m['id']:[row for row in rows if row['pxname']=='studio_be_'+m['id'] and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
+        runtime={m['id']:[row for row in rows if row['pxname']==backend_name(m) and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
         from .enterprise import route_key
-        route_runtime={m['id']:[dict(path=row['path'],action=row['action'],rows=[entry for entry in rows if entry['pxname']=='studio_be_'+m['id']+'_r'+route_key(m,row) and entry['svname'] not in ('FRONTEND','BACKEND')]) for index,row in enumerate(m.get('routes',[]))] for m in models}
+        route_runtime={m['id']:[dict(path=row['path'],action=row['action'],rows=[entry for entry in rows if entry['pxname']==backend_name(m,row) and entry['svname'] not in ('FRONTEND','BACKEND')]) for index,row in enumerate(m.get('routes',[]))] for m in models}
         from .monitoring import service_status
         statuses={m['id']:service_status(m,runtime[m['id']],route_runtime[m['id']]) for m in models}
         return dict(service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
@@ -236,6 +238,12 @@ class ServiceManager:
         extra=''
         if self.engine.extra and self.engine.extra.is_dir():extra='\n'.join(decode(p.read_bytes()) for p in sorted(self.engine.extra.glob('*.cfg')))
         other=bindings(extra)
+        from .naming import names as pool_names
+        used={s['name'].lower() for s in parsed+other if s['type'] in ('backend','listen')}
+        for model in models:
+            for name in pool_names(model):
+                if name.lower() in used:raise ValueError('Имя backend уже используется: '+name+'. Выберите другое имя в настройках сервиса.')
+                used.add(name.lower())
         insertions={};tls_add={};tail=[];claimed=[];warnings=[]
         def add(index,model,kind,body):insertions.setdefault(index,[]).append(block(model['id'],kind,body))
         def listener(model,port,tls,http_redirect=False):
@@ -285,7 +293,7 @@ class ServiceManager:
             return section['name']
         def route(model,redirect=False):
             from .enterprise import http_route,tcp_route
-            if model.get('tcp_frontend') and not redirect:return '    default_backend studio_be_'+model['id']+'\n'
+            if model.get('tcp_frontend') and not redirect:return '    default_backend '+backend_name(model)+'\n'
             return tcp_route(model) if model.get('sni_routing') and not redirect else http_route(model,redirect)
         def attach(model,name,redirect=False):
             owned=next((s for s in claimed if s['name']==name),None)
@@ -351,10 +359,10 @@ class ServiceManager:
                         body+='    acl st_known_sni '+fetch+' -i '+' '.join(d for item in spec['models'] for d in item['domains'])+'\n'
                         body+='    tcp-request content reject if !st_known_sni !{ src '+fallback['allowed_ips']+' }\n'
                     if not spec['tls']:body+='    tcp-request content accept if { req.ssl_hello_type 1 }\n'
-                    if fallback:body+='    default_backend studio_be_'+fallback['id']+'\n'
+                    if fallback:body+='    default_backend '+backend_name(fallback)+'\n'
                 else:
                     if first['allowed_ips']:body+='    tcp-request connection reject unless { src '+first['allowed_ips']+' }\n'
-                    body+='    default_backend studio_be_'+first['id']+'\n'
+                    body+='    default_backend '+backend_name(first)+'\n'
             tail.append(block(first['id'],'listener_'+str(spec['port']),body))
         for model in models:
             body='# studio-model '+packed(model)+'\n'
@@ -379,7 +387,7 @@ class ServiceManager:
 
     def _backend_base(self,m):
         http=PRESETS[m['protocol']][3]=='http';mode='http' if http else 'tcp'
-        s='backend studio_be_'+m['id']+'\n    mode '+mode+'\n    balance '+m['balance']+'\n    timeout connect 5s\n    timeout server '+str(m['timeout'])+'s\n    timeout tunnel '+str(m.get('tunnel_timeout',m['timeout']))+'s\n'
+        s='backend '+backend_name(m)+'\n    mode '+mode+'\n    balance '+m['balance']+'\n    timeout connect 5s\n    timeout server '+str(m['timeout'])+'s\n    timeout tunnel '+str(m.get('tunnel_timeout',m['timeout']))+'s\n'
         if m['protocol']=='rds' and m.get('rds_mode')=='token':
             s+='    persist rdp-cookie\n'
         forwarded_port='%[ssl_fc,iif('+str(m['port'])+','+str(m['http_port'])+')]' if m.get('listener_port',m['port'])!=m['port'] else '%[dst_port]'
@@ -403,7 +411,7 @@ class ServiceManager:
             if not ca or ca=='auto':ca=next((p for p in ('/etc/ssl/certs/ca-certificates.crt','/etc/pki/tls/certs/ca-bundle.crt') if Path(p).is_file()),None)
             if not ca or not Path(ca).is_file() or re.search(r'[\s#\\]',ca):raise ValueError('Для проверки TLS внутреннего сервера настройте ca_bundle или установите системные CA-сертификаты.')
         for i,server in enumerate(m['backends']):
-            s+='    server node'+str(i+1)+' '+address(server['host'],server['port'])+' weight '+str(server['weight'])
+            s+='    server '+server.get('name','node'+str(i+1))+' '+address(server['host'],server['port'])+' weight '+str(server['weight'])
             if server['backup']:s+=' backup'
             if m['health']!='none':s+=' check inter '+str(m['check_interval'])+'s fall '+str(m.get('check_fall',3))+' rise '+str(m.get('check_rise',2))
             if m['health']=='tls' and not m['upstream_tls']:
@@ -431,6 +439,8 @@ class ServiceManager:
             models=[m for m in models if m['id']!=identifier];summary=['Удалить публикацию «'+existing['name']+'». Внутренний сервер и сертификат не удаляются.']
         else:
             if action!='upsert':raise ValueError('Неизвестное действие.')
+            data=dict(data)
+            if not existing:data.setdefault('naming','readable')
             model=self.normalize(data,identifier or secrets.token_hex(8))
             models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
             label=PRESETS[model['protocol']][0]
@@ -438,11 +448,19 @@ class ServiceManager:
             if not model['enabled']:summary.append('Публикация будет выключена. Её порт и маршруты не активируются.')
             if model['redirect']:summary.append('HTTP на порту '+str(model['http_port'])+' → HTTPS на порту '+str(model['port'])+'.')
         owned=[b for section in bindings(decode(raw)) if section['name'].startswith('studio_fe_') for b in section['binds']]
+        if action!='delete' and existing:
+            from .naming import changes,references
+            base=references(base,changes(existing,model))
         candidate,warnings=self.render(base,models,probe,owned)
         checked=self.engine.validate(candidate)
         import difflib
         checked.update(changed=candidate!=raw,diff=''.join(difflib.unified_diff(mask(raw)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Мастер публикации')),summary=summary,warnings=list(dict.fromkeys(warnings))+['Проверьте DNS и доступность внешнего порта в сети или у провайдера.'])
         if action!='delete':
+            if existing:
+                from .naming import changes
+                renamed=changes(existing,model)
+                checked['summary'] += [old+' → '+new for old,new in renamed.items()]
+                if renamed or [s.get('name') for s in existing['backends']]!=[s.get('name') for s in model['backends']]:checked['warnings'].append('Меняются технические имена. Проверьте внешние скрипты, метрики, Runtime API и server-state, использующие старые имена.')
             if model['protocol'] in ('rdgateway','rdweb'):
                 gateway=model['protocol']=='rdgateway'
                 checked['summary'].append('Windows '+('RD Gateway: RDP через HTTPS, TCP/443.' if gateway else 'RD Web Access: откройте /RDWeb/ на опубликованном домене.'))
@@ -457,10 +475,25 @@ class ServiceManager:
                 checked['summary'].append('RDS: '+('токенная маршрутизация брокера (msts) на Session Host.' if token else 'прозрачный вход на RDP-порт брокера / redirector.'))
                 checked['warnings'].append('На Windows включите token redirection и отключите IP address redirection; в пуле должны быть все реальные IPv4 и RDP-порты серверов назначения.' if token else 'При IP-перенаправлении клиент должен иметь доступ к адресам Session Host. Для внешнего доступа используйте RD Gateway или токенный режим.')
                 checked['warnings'].append('Используйте RDP-файл нужной коллекции из RD Web; HAProxy сохраняет loadbalanceinfo и не настраивает роли Windows.')
+            if model.get('naming')=='readable':
+                from .naming import names as pool_names
+                if pool_names(model):checked['summary'].append('Имена backend: '+', '.join(pool_names(model))+'.')
+                if model['backends']:checked['summary'].append('Имена серверов: '+', '.join(s['name'] for s in model['backends'])+'.')
             if model.get('aliases'):checked['summary'].append('Дополнительные домены: '+', '.join(model['aliases'])+'.')
             if model.get('sni_routing'):checked['summary'].append('Общий TLS-порт, маршрутизация по SNI: '+', '.join(model['domains'])+'.')
             if model.get('routes'):checked['summary'].append('Маршруты по путям: '+str(len(model['routes']))+'; запрещённые пути отвечают 403.')
         return checked,dict(raw=candidate,revision=revision,reason='service:'+action)
+
+    def preview_names(self,revision):
+        if self.engine.settings['read_only']:raise ValueError('Переименование недоступно в режиме наблюдения.')
+        raw,actual=self.engine.snapshot()
+        if revision!=actual:raise Conflict('Конфигурация изменилась. Обновите список сервисов.')
+        from .naming import migrate
+        base,models=clean(raw);base,models,mapping=migrate(self,base,models)
+        candidate,warnings=self.render(base,models,probe=False);checked=self.engine.validate(candidate)
+        import difflib
+        checked.update(changed=candidate!=raw,diff=''.join(difflib.unified_diff(mask(raw)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущие имена',tofile='Понятные имена')),summary=[old+' → '+new for old,new in mapping.items()],warnings=warnings+['Имена серверов также станут понятными. Адреса, порты, проверки и cookie остаются прежними. Внешние скрипты, метрики, Runtime API и server-state могут ссылаться на старые имена: учтите переименование перед применением.'])
+        return checked,dict(raw=candidate,revision=revision,reason='service:rename')
 
     def connectivity(self,data):
         identifier=data.get('id') or secrets.token_hex(8);model=self.normalize(data,identifier);results=[]

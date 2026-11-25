@@ -56,6 +56,7 @@ def pool(manager,section,defaults):
         if p[:3]==['http-check','expect','status'] and len(p)==4:data['health_status']=p[3];continue
         if p[0]!='server' or len(p)<3:raise Unsupported('Backend: директива «'+p[0]+'» требует ручного переноса.')
         host,port=endpoint(p[2]);server=dict(host=host,port=port,weight=1,backup=False)
+        if re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{0,62}',p[1]):server['name']=p[1]
         flags=dict(check=False,ssl=False,verify=None,interval=2,rise=2,fall=3,proxy=False,maxconn=0,sni='',check_sni='',verifyhost='',ca='')
         i=3
         while i<len(p):
@@ -186,7 +187,7 @@ class Importer:
                             certificates=[Path(f).name for f in files];certificate=certificates[0]
                         domains=a[4:]
                         identifier=hashlib.sha256((front['name']+'\0'+str(route_index)+'\0'+r[1]).encode()).hexdigest()[:16]
-                        data.update(id=identifier,name=(front['name']+' — '+domains[0] if redirect else r[1])[:80],protocol=protocol,enabled=True,port=bind['lo'],bind_address=bind['host'],domain=domains[0] if http else '',aliases=domains[1:] if http else [],sni_domains=domains if not http else [],sni_routing=not http and not fallback,tcp_frontend=front['name'] if fallback else '',tls_mode='terminate' if bind['tls'] else 'plain' if http or fallback else 'passthrough',certificate=certificate,certificates=certificates,redirect=False,http_host_match='raw' if a[2]=='hdr(host)' else 'normalized',imported=True)
+                        data.update(naming='readable',id=identifier,name=(front['name']+' — '+domains[0] if redirect else r[1])[:80],protocol=protocol,enabled=True,port=bind['lo'],bind_address=bind['host'],domain=domains[0] if http else '',aliases=domains[1:] if http else [],sni_domains=domains if not http else [],sni_routing=not http and not fallback,tcp_frontend=front['name'] if fallback else '',tls_mode='terminate' if bind['tls'] else 'plain' if http or fallback else 'passthrough',certificate=certificate,certificates=certificates,redirect=False,http_host_match='raw' if a[2]=='hdr(host)' else 'normalized',imported=True)
                         model=self.manager.normalize(data,identifier)
                         if bind['tls']:self.manager.certificate_check(model)
                         removed=({route_index} if fallback else {acl_index,route_index})|(set(range(backend['start'],ends[backend['start']])) if backend else set())

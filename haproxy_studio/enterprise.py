@@ -1,4 +1,5 @@
 """Form-based multi-domain, Exchange and SNI routing. No organization data."""
+from .naming import backend_name
 import copy
 import hashlib
 import ipaddress
@@ -136,7 +137,7 @@ def http_route(m,redirect=False):
         if m.get('http_redirect_mode')=='scheme':return body+'    http-request redirect scheme https code '+str(m.get('redirect_code',301))+' if '+condition+'\n'
         exceptions=m.get('http_exceptions',[])
         for prefix in exceptions:body+=path_acl(ident+'_exception',prefix,m.get('path_ignore_case'))
-        if exceptions:body+='    http-request allow if '+condition+' '+ident+'_exception\n    use_backend studio_be_'+m['id']+' if '+condition+' '+ident+'_exception\n'
+        if exceptions:body+='    http-request allow if '+condition+' '+ident+'_exception\n    use_backend '+backend_name(m)+' if '+condition+' '+ident+'_exception\n'
         origin='https://'+(model_domains(m)[0] if len(model_domains(m))==1 else '%[req.hdr(host),field(1,:)]')+(':'+str(m['port']) if m['port']!=443 else '')
         body+='    http-request redirect prefix '+origin+' code '+str(m.get('redirect_code',301))+' if '+condition+(' !'+ident+'_exception' if exceptions else '')+'\n'
         return body
@@ -148,20 +149,20 @@ def http_route(m,redirect=False):
     if m.get('fallback_status') and routes:body+='    http-request deny deny_status '+str(m['fallback_status'])+' if '+condition+' '+' '.join('!'+ident+'_r'+route_key(m,row) for _,row in routes)+'\n'
     body+='    http-request allow if '+condition+'\n'
     for index,row in routes:
-        if row['action']=='backend':body+='    use_backend studio_be_'+m['id']+'_r'+route_key(m,row)+' if '+condition+' '+ident+'_r'+route_key(m,row)+'\n'
-    return body if m.get('fallback_status') and routes else body+'    use_backend studio_be_'+m['id']+' if '+condition+'\n'
+        if row['action']=='backend':body+='    use_backend '+backend_name(m,row)+' if '+condition+' '+ident+'_r'+route_key(m,row)+'\n'
+    return body if m.get('fallback_status') and routes else body+'    use_backend '+backend_name(m)+' if '+condition+'\n'
 
 def tcp_route(m):
     fetch='ssl_fc_sni' if m['tls_mode']=='terminate' else 'req.ssl_sni'
     acl='st_'+m['id']+'_sni'
     result='    acl '+acl+' '+fetch+' -i '+' '.join(m['domains'])+'\n'
     if m['allowed_ips']:result+='    tcp-request content reject if '+acl+' !{ src '+m['allowed_ips']+' }\n'
-    return result+'    use_backend studio_be_'+m['id']+' if '+acl+'\n'
+    return result+'    use_backend '+backend_name(m)+' if '+acl+'\n'
 
 def backends(manager,m):
     result='' if m.get('fallback_status') and m.get('routes') else manager._backend_base(m)
     for index,row in enumerate(m.get('routes',[])):
         if row['action']!='backend':continue
-        child=copy.deepcopy(m);child.update(row);child.update(id=m['id']+'_r'+route_key(m,row),health='http',strip_prefix=False,routes=[])
+        child=copy.deepcopy(m);child.update(row);child.update(backend_name=backend_name(m,row),id=m['id']+'_r'+route_key(m,row),health='http',strip_prefix=False,routes=[])
         result+=manager._backend_base(child)
     return result

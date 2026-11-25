@@ -1,15 +1,15 @@
 """Presentation only: describe managed routes without changing HAProxy configuration."""
+from .naming import backend_name
 import re
 from .services import BLOCK,bindings,decode
-from .enterprise import route_key
 
 
 def describe(raw,sections,models):
     by_id={m['id']:m for m in models};pools={}
     for model in models:
-        pools['studio_be_'+model['id']]=(model,None)
+        pools[backend_name(model)]=(model,None)
         for route in model.get('routes',[]):
-            if route['action']=='backend':pools['studio_be_'+model['id']+'_r'+route_key(model,route)]=(model,route)
+            if route['action']=='backend':pools[backend_name(model,route)]=(model,route)
     parsed=bindings(decode(raw));parsed_names={s['name']:s for s in parsed}
     named={s['name']:s for s in sections};bridges={}
     # A transport bridge is identified by its destination, never by a guessed name.

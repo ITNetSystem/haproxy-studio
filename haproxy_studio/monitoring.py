@@ -1,11 +1,11 @@
 """Readable runtime identities and service health across independent route pools."""
+from .naming import backend_name
 def identities(models):
-    from .enterprise import route_key
     result={}
     for model in models:
-        result['studio_be_'+model['id']]=(model['name'],'')
+        result[backend_name(model)]=(model['name'],'')
         for route in model.get('routes',[]):
-            if route['action']=='backend':result['studio_be_'+model['id']+'_r'+route_key(model,route)]=(model['name'],route['path'])
+            if route['action']=='backend':result[backend_name(model,route)]=(model['name'],route['path'])
     return result
 
 def annotate(rows,sections,models):

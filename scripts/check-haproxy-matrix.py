@@ -40,6 +40,9 @@ def generate(root):
     layered=BASE+'frontend public_tls\n    bind 0.0.0.0:443\n    mode tcp\n    default_backend bridge\nbackend bridge\n    mode tcp\n    server local 127.0.0.1:8443 send-proxy-v2\nfrontend local_tls\n    bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert)+'\n    mode http\n    http-request set-header X-Forwarded-Proto https\n    http-request deny deny_status 421\n'
     save('preserve-layered-https',[data('https',https_frontend='local_tls',forward_headers=False)],layered)
     save('imported-tcp-fallback',[data('tcp',port=2222,tcp_frontend='legacy_tcp',forward_headers=False,health='tcp')],BASE+'frontend legacy_tcp\n    bind 0.0.0.0:2222\n    mode tcp\n    option tcplog\n')
+    save('readable-http',[data('https',naming='readable',name='Company website',backend_name='be_website',backends=[dict(name='web01',host='192.0.2.10',port=443)],upstream_tls=True,upstream_verify=False)])
+    save('readable-exchange',[data('exchange',naming='readable',backend_name='be_exchange',fallback_status=503)])
+    save('readable-sni',[data('imaps',naming='readable',sni_routing=True,sni_domains='app.example.test',sni_default=True)])
     return count
 
 def main():

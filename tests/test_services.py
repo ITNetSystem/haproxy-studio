@@ -31,7 +31,7 @@ class ServicesFixture(unittest.TestCase):
         self.engine=Engine(self.settings);self.manager=ServiceManager(self.engine)
     def tearDown(self):self.temp.cleanup()
     def data(self,protocol='https',**changes):
-        value=dict(name='Проверка сервиса',protocol=protocol,domain='app.example.test',certificate='leaf.pem',backends=[dict(host='192.0.2.15',port=PRESETS[protocol][2])]);value.update(changes);return value
+        value=dict(naming='legacy',name='Проверка сервиса',protocol=protocol,domain='app.example.test',certificate='leaf.pem',backends=[dict(host='192.0.2.15',port=PRESETS[protocol][2])]);value.update(changes);return value
     def preview(self,data,action='upsert'):
         return self.manager.preview(data,self.engine.snapshot()[1],action,probe=False)
 class ServicesTests(ServicesFixture):

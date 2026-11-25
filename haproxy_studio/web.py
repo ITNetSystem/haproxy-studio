@@ -235,6 +235,9 @@ class Application:
                     if path.endswith('/scan'):return self.reply(200, importer.scan(value))
                     checked,draft=importer.preview(value)
                     return self.reply(200, app.store_draft(checked,draft,key))
+                if path == base + '/api/services/names/preview':
+                    checked,draft=app.services.preview_names(value.get('revision'))
+                    return self.reply(200, app.store_draft(checked,draft,key))
                 if path == base + '/api/services/preview':
                     checked, draft = app.services.preview(value.get('service', {}), value.get('revision'), value.get('action', 'upsert'))
                     return self.reply(200, app.store_draft(checked, draft, key))
