@@ -238,6 +238,10 @@ class Application:
                 if path == base + '/api/services/names/preview':
                     checked,draft=app.services.preview_names(value.get('revision'))
                     return self.reply(200, app.store_draft(checked,draft,key))
+                if path == base + '/api/services/replace/preview':
+                    from .replacement import preview as preview_replacement
+                    checked,draft=preview_replacement(app.services,value.get('service'),value.get('revision'),value.get('target_id'),value.get('confirm'),value.get('keep_redirect',True))
+                    return self.reply(200, app.store_draft(checked,draft,key))
                 if path == base + '/api/services/preview':
                     checked, draft = app.services.preview(value.get('service', {}), value.get('revision'), value.get('action', 'upsert'))
                     return self.reply(200, app.store_draft(checked, draft, key))
