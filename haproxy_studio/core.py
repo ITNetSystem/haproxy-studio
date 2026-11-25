@@ -288,8 +288,10 @@ class Engine:
         allowed = ('Version', 'Uptime', 'CurrConns', 'CumConns', 'ConnRate', 'Maxconn', 'Nbthread')
         from .services import clean
         from .monitoring import annotate
-        parsed=sections(raw)
-        annotate(rows,parsed,clean(raw)[1])
+        from .routing import describe
+        models=clean(raw)[1]
+        parsed=describe(raw,sections(raw),models)
+        annotate(rows,parsed,models)
         return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
 
     def history(self):

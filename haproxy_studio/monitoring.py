@@ -10,10 +10,11 @@ def identities(models):
 
 def annotate(rows,sections,models):
     labels=identities(models)
+    readable={section['name']:section['display_name'] for section in sections if section.get('display_name') and section['display_name']!=section['name']}
     servers={(section['name'],server['name']):server['address'] for section in sections for server in section.get('servers',[])}
     for row in rows:
         key=(row['pxname'],row['svname'])
-        name,path=labels.get(row['pxname'],(row['svname'],''))
+        name,path=labels.get(row['pxname'],(readable.get(row['pxname'],row['svname']),''))
         row.update(display_name=name,server_address=servers.get(key,''),route_path=path)
     return rows
 
