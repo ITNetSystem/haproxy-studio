@@ -18,7 +18,7 @@ PRESETS = {
     'http': ('Сайт HTTP',80,80,'http','plain','Обычный сайт без TLS. Для публичного сайта лучше HTTPS.'),
     'websocket': ('WebSocket / веб-приложение',443,80,'http','terminate','HTTPS с поддержкой долгих WebSocket-соединений.'),
     'rdgateway': ('RDS: RD Gateway — шлюз HTTPS',443,443,'tcp','passthrough','Внешний RDP через HTTPS до Windows RD Gateway. Сквозной TLS, сертификат на Windows; TCP/443, без публикации UDP/3391.'),
-    'rdweb': ('RDS: RD Web Access — портал HTTPS',443,443,'tcp','passthrough','Веб-портал RDS по HTTPS: /RDWeb/. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
+    'rdweb': ('RDS: RD Web Access — портал HTTPS',443,443,'tcp','passthrough','Веб-портал RDS: обычная страница или HTML5-клиент. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
     'rds': ('RDS: прямой RDP через брокер (3389)',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
     'rdp': ('Удалённый рабочий стол RDP',3389,3389,'tcp','plain','Прозрачная передача RDP. Шифрование и учётные записи на Windows-сервере.'),
     'ssh': ('SSH',22,22,'tcp','plain','Прозрачная передача SSH. Выберите свободный внешний порт, например 2222.'),
@@ -210,7 +210,8 @@ class ServiceManager:
         from .enterprise import normalize
         from .preserve import normalize as preserve
         from .naming import normalize as normalize_names
-        return normalize_names(data,preserve(self,data,normalize(self,data,model)))
+        from .rdweb import normalize as normalize_rdweb
+        return normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model))))
 
     def certificate_path(self,name):
         if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Выберите сертификат из списка или загрузите PEM/CRT и ключ.')
@@ -440,6 +441,7 @@ class ServiceManager:
         else:
             if action!='upsert':raise ValueError('Неизвестное действие.')
             data=dict(data)
+            if existing and 'rdweb_client' not in existing and data.get('rdweb_client')==('standard' if data.get('protocol')=='rdweb' else 'none'):data.pop('rdweb_client')
             if not existing:data.setdefault('naming','readable')
             model=self.normalize(data,identifier or secrets.token_hex(8))
             models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
@@ -463,7 +465,9 @@ class ServiceManager:
                 if renamed or [s.get('name') for s in existing['backends']]!=[s.get('name') for s in model['backends']]:checked['warnings'].append('Меняются технические имена. Проверьте внешние скрипты, метрики, Runtime API и server-state, использующие старые имена.')
             if model['protocol'] in ('rdgateway','rdweb'):
                 gateway=model['protocol']=='rdgateway'
-                checked['summary'].append('Windows '+('RD Gateway: RDP через HTTPS, TCP/443.' if gateway else 'RD Web Access: откройте /RDWeb/ на опубликованном домене.'))
+                from .rdweb import path as portal_path
+                checked['summary'].append('Windows '+('RD Gateway: RDP через HTTPS, TCP/443.' if gateway else 'RD Web Access: откройте '+portal_path(model)+' на опубликованном домене.'))
+                if gateway and portal_path(model):checked['summary'].append('Страница RD Web на общем домене: '+portal_path(model))
                 checked['warnings'].append('TLS передаётся до Windows без расшифровки. Сертификат Windows должен покрывать публичное имя; роли, коллекции, NLA и политики доступа настраиваются на Windows.')
                 if model.get('sni_routing'):checked['warnings'].append('На общем 443 клиенты должны отправлять SNI. Для клиента без SNI нужен отдельный IP/порт или согласованный fallback; существующий fallback не заменяется.')
                 if gateway:

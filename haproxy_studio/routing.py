@@ -102,6 +102,9 @@ def publications(models,rows,sections):
         else:
             source=[domain+':'+str(model['port']) for domain in domains] if domains else [address(model['bind_address'],model['port']) if model['bind_address']!='*' else 'Адрес HAProxy · порт '+str(model['port'])]
             connection=PRESETS[model['protocol']][0]
+        if model['protocol'] in ('rdweb','rdgateway') and domains:
+            from .rdweb import path as portal_path
+            source=['https://'+domain+(':'+str(model['port']) if model['port']!=443 else '')+portal_path(model) for domain in domains]
         runtime_pool=[r for r in rows if r['pxname']==backend_name(model) and r['svname'] not in ('FRONTEND','BACKEND')]
         routes=[dict(action=r['action'],rows=[entry for entry in rows if entry['pxname']==backend_name(model,r) and entry['svname'] not in ('FRONTEND','BACKEND')]) for r in model.get('routes',[])]
         cards=[dict(card,entrance=s['display_name'],technical_frontend=s['name']) for s in sections for card in s.get('route_cards',[]) if card.get('service_id')==model['id']]

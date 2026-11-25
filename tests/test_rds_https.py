@@ -85,3 +85,22 @@ class RdsHttpsTests(ServicesFixture):
                 except subprocess.TimeoutExpired:proxy.kill();proxy.wait()
             for server in servers:server.shutdown();server.server_close()
             for thread in threads:thread.join()
+
+    def test_rdweb_standard_and_html5_addresses_are_persisted(self):
+        from haproxy_studio.rdweb import path
+        from haproxy_studio.routing import publications,describe
+        from haproxy_studio.core import sections
+        for mode,expected in [('standard','/RDWeb/'),('html5','/RDWeb/webclient/')]:
+            checked,draft=self.preview(self.data('rdweb',rdweb_client=mode));self.assertTrue(checked['ok'],checked['output']);model=clean(draft['raw'])[1][0];self.assertEqual(expected,path(model));self.assertEqual(mode,model['rdweb_client']);items=publications([model],[],describe(draft['raw'],sections(draft['raw']),[model]));self.assertEqual(['https://app.example.test'+expected],items[0]['source']);self.assertTrue(any(expected in item for item in checked['summary']))
+    def test_rdweb_defaults_and_gateway_combined_portal(self):
+        from haproxy_studio.rdweb import path
+        self.assertEqual('/RDWeb/',path(self.manager.normalize(self.data('rdweb'),'a'*16)))
+        self.assertEqual('',path(self.manager.normalize(self.data('rdgateway'),'a'*16)))
+        self.assertEqual('/RDWeb/webclient/',path(self.manager.normalize(self.data('rdgateway',rdweb_client='html5'),'a'*16)))
+        for value in ('none','other','/custom/'):
+            with self.assertRaises(ValueError):self.preview(self.data('rdweb',rdweb_client=value))
+    def test_html5_selection_does_not_generate_http_rewrites_in_tcp_tunnel(self):
+        checked,standard=self.preview(self.data('rdweb',rdweb_client='standard'));self.assertTrue(checked['ok']);self.config.write_bytes(standard['raw']);model=clean(standard['raw'])[1][0];model['rdweb_client']='html5';checked,html5=self.preview(model);self.assertTrue(checked['ok']);strip=lambda raw:'\n'.join(line for line in raw.decode().splitlines() if not line.startswith('#'))
+        self.assertEqual(strip(standard['raw']),strip(html5['raw']))
+    def test_old_rdweb_default_selection_does_not_cause_noop_reload(self):
+        checked,draft=self.preview(self.data('rdweb'));self.assertTrue(checked['ok']);self.config.write_bytes(draft['raw']);model=clean(draft['raw'])[1][0];model['rdweb_client']='standard';checked,again=self.preview(model);self.assertFalse(checked['changed']);self.assertEqual(draft['raw'],again['raw'])
