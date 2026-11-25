@@ -69,7 +69,8 @@ def normalize(manager,data,m):
     if m['redirect_root'] and (not http or not m.get('root_redirect')):raise ValueError('Для корневого перенаправления задайте адрес назначения веб-сервиса.')
     if (m['canonical_slash'] or m['reject_other_paths']) and (not http or m['path']=='/'):raise ValueError('Настройки ограниченного пути требуют веб-сервис с путём, отличным от /.')
     m['imported']=data.get('imported',False) is True
-    return m
+    from .acl_import import normalize as normalize_acl_import
+    return normalize_acl_import(data,m)
 
 def resolve_https(model,parsed):
     """Prove public TCP default -> local raw-TLS bridge -> named HTTP TLS listener."""

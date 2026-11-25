@@ -1,6 +1,10 @@
 # HAProxy Studio
 
 
+## Shared backend and ACL import
+
+Version 0.13 adopts finite Host/SNI ACLs with AND/OR, bounded negation and named path/IP predicates while retaining shared backends verbatim. Routes keep their original positions; pool addresses are edited separately. See [the Russian guide and limitations](docs/acl-import.ru.md).
+
 ## Existing HAProxy infrastructure
 
 Version 0.12 adds baseline/candidate diagnostics, a self-publication preset, RD Web redirects terminated at HAProxy, reviewed certificate rotation, and read-only discovery with partial pool address editing. See [the detailed Russian guide and limitations](docs/infrastructure-testing.ru.md). Arbitrary ACLs/shared pools are retained rather than approximated by the full importer; AWS-LC behavior is covered by simulated-build tests, not a native AWS-LC integration run.

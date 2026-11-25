@@ -10,6 +10,7 @@ def describe(raw,sections,models):
         pools[backend_name(model)]=(model,None)
         for route in model.get('routes',[]):
             if route['action']=='backend':pools[backend_name(model,route)]=(model,route)
+    text=decode(raw);owners=[(text.count('\n',0,m.start())+1,text.count('\n',0,m.end())+1,m[1]) for m in BLOCK.finditer(text)]
     parsed=bindings(decode(raw));parsed_names={s['name']:s for s in parsed}
     named={s['name']:s for s in sections};bridges={}
     # A transport bridge is identified by its destination, never by a guessed name.
@@ -40,6 +41,10 @@ def describe(raw,sections,models):
         else:section['display_name']='Вход TCP'+(' / TLS' if tls else '')+(' · '+port if port else '')
         for route in section['routes']:
             target=named.get(route['backend']);model,specific=pools.get(route['backend'],(None,None))
+            if model and model.get('import_pool'):
+                owner=next((identifier for start,end,identifier in owners if start<=route['line']<end),None)
+                model=by_id.get(owner) if owner else None
+                specific=None
             card=dict(service_id=model['id'] if model else None,kind='proxy',name=model['name'] if model else target.get('display_name',route['backend']) if target else route['backend'],domains=model.get('domains') or ([model['domain']] if model.get('domain') else []) if model else [],path=specific['path'] if specific else model.get('path','/') if model else '',destination=', '.join(s['address'] for s in target['servers']) if target else '',line=route['line'],technical_backend=route['backend'],technical_condition=route['condition'],condition='')
             if model:
                 if not route['condition']:card['condition']='Все подключения' if len(section['routes'])==1 and not model.get('sni_routing') else 'Остальные подключения (по умолчанию)'
@@ -51,6 +56,16 @@ def describe(raw,sections,models):
                 if model.get('allowed_ips'):card['condition']+=' · разрешённые источники: '+model['allowed_ips']
             else:
                 card['condition']='Остальные подключения' if not route['condition'] else 'Ручное условие — см. технические детали'
+            if model and model.get('import_pool'):
+                part=re.search(r'_slot(\d+)_term(\d+)',route['condition'])
+                if part:
+                    term=model['import_acl']['slots'][int(part[1])]['terms'][int(part[2])]
+                    card['domains']=[d for d in term['domains'] if d in model['domains']]
+                    template=model.get('import_domain_template') or model['import_acl']['slots'][0]['terms'][0]['domains'][0]
+                    if template in term['domains']:
+                        original={d for slot in model['import_acl']['slots'] for t in slot['terms'] for d in t['domains']}
+                        card['domains'] += [d for d in model['domains'] if d not in original]
+                    card['condition']='Домены → общий backend'+(' · ACL: '+', '.join(term['tests']) if term['tests'] else '')
             if route['backend'] in bridges:
                 card.update(name='Остальные HTTPS-сайты',condition='Если отдельная TLS-публикация не выбрана',destination='Локальный вход HTTPS → '+card['destination'])
             section['route_cards'].append(card)
@@ -120,5 +135,5 @@ def publications(models,rows,sections):
                 item=(server.get('name','node'+str(i+1)),address(server['host'],server['port']))
                 if item not in seen:server_labels.append(dict(name=item[0],address=item[1]));seen.add(item)
         if model.get('http_action')=='redirect':destinations=[model.get('http_redirect_location') or 'HTTPS того же домена'];connection='HTTP-перенаправление'
-        result.append(dict(id=model['id'],name=model['name'],connection=connection,source=source,port=model['port'],destinations=destinations,status=service_status(model,runtime_pool,routes),enabled=model['enabled'],rules=cards,backend_names=pool_names(model),servers=server_labels))
+        result.append(dict(id=model['id'],name=model['name'],connection=connection,source=source,port=model['port'],destinations=destinations,status=service_status(model,runtime_pool,routes),enabled=model['enabled'],rules=cards,backend_names=[model['import_pool']] if model.get('import_pool') else pool_names(model),servers=server_labels))
     return result

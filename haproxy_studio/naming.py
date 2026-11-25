@@ -19,6 +19,7 @@ def valid(value):
     return value
 
 def backend_name(model,route=None):
+    if model.get('import_pool'):return model['import_pool']
     if route is not None:
         if route.get('backend_name'):return route['backend_name']
         from .enterprise import route_key
@@ -27,12 +28,14 @@ def backend_name(model,route=None):
 
 def names(model):
     result=[]
+    if model.get('import_pool'):return result
     if model.get('http_action')=='redirect':return result
     if not(model.get('fallback_status') and model.get('routes')):result.append(backend_name(model))
     result.extend(backend_name(model,r) for r in model.get('routes',[]) if r['action']=='backend')
     return result
 
 def normalize(data,model):
+    if model.get('import_pool'):return model
     mode=data.get('naming','legacy')
     if mode not in ('legacy','readable'):raise ValueError('Неизвестный режим имён в конфиге.')
     if mode=='legacy':return model
@@ -92,6 +95,7 @@ def migrate(manager,base,models):
     manual=base+(''.join(p.read_bytes().decode('utf-8','surrogateescape') for p in sorted(extra.glob('*.cfg'))) if extra and extra.is_dir() else '')
     taken={s['name'].lower() for s in bindings(manual) if s['type'] in ('backend','listen')}
     for model in models:
+        if model.get('import_pool'):continue
         if model.get('naming')=='readable':taken.update(n.lower() for n in names(model))
     def unique(value):
         root=value[:63];name=root;n=2
@@ -100,6 +104,7 @@ def migrate(manager,base,models):
         taken.add(name.lower());return name
     converted=[];mapping={}
     for model in models:
+        if model.get('import_pool'):converted.append(model);continue
         if model.get('naming')=='readable':converted.append(model);continue
         data=copy.deepcopy(model);data.update(naming='readable',backend_name=unique(automatic_backend(model['name'])),sni_domains=model.get('domains',[]))
         for route in data.get('routes',[]):

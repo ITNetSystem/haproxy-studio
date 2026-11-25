@@ -43,6 +43,22 @@ def generate(root):
     save('readable-http',[data('https',naming='readable',name='Company website',backend_name='be_website',backends=[dict(name='web01',host='192.0.2.10',port=443)],upstream_tls=True,upstream_verify=False)])
     save('readable-exchange',[data('exchange',naming='readable',backend_name='be_exchange',fallback_status=503)])
     save('readable-sni',[data('imaps',naming='readable',sni_routing=True,sni_domains='app.example.test',sni_default=True)])
+    # Lossless ACL adoption keeps shared pools and inserts each route in place.
+    from haproxy_studio.importer import Importer,retained_comment
+    def save_acl(name,source):
+        nonlocal count
+        base,_,candidates,_=Importer(manager).discover(source)
+        chosen=[c for c in candidates if c.get('anchors')]
+        if not chosen:raise ValueError('ACL matrix fixture was not adopted')
+        anchors={i:a for c in chosen for i,a in c['anchors'].items()}
+        baseline=''.join(retained_comment(line)+anchors[i] if i in anchors else line for i,line in enumerate(base.splitlines(True)))
+        raw,_=manager.render(baseline,[c['model'] for c in chosen],probe=False)
+        (cases/(name+'.cfg')).write_text(decode(raw).replace(str(root),'/studio-check'));count+=1
+    shared=BASE+'frontend mail_web\n bind 127.0.0.1:18080\n mode http\n acl first hdr(host),lower,field(1,:) -i app.example.test\n acl second hdr(host),lower,field(1,:) -i other.example.test\n acl owa path_beg -i /owa\n use_backend exchange if first owa\n use_backend exchange if second owa\nbackend exchange\n mode http\n balance source\n timeout server 500ms\n server mailbox 192.0.2.10:443 ssl verify none check inter 500ms slowstart 30s\n'
+    save_acl('import-shared-domain-path',shared)
+    save_acl('import-inline-domain-case',shared.replace('use_backend exchange if first owa','use_backend exchange if { hdr(host) -m str app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { hdr(host) -i other.example.test } owa'))
+    mixed=BASE+'frontend outer\n bind 0.0.0.0:443\n mode tcp\n tcp-request inspect-delay 5s\n tcp-request content accept if { req.ssl_hello_type 1 }\n acl first req_ssl_sni -i app.example.test\n acl second req.ssl_sni -i other.example.test\n use_backend bridge if first or second\nbackend bridge\n mode tcp\n server local 127.0.0.1:8443 send-proxy-v2\n'+shared[len(BASE):].replace('frontend mail_web\n bind 127.0.0.1:18080','frontend mail_web\n bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert))
+    save_acl('import-conditional-sni-proxy-shared-pool',mixed)
     return count
 
 def main():

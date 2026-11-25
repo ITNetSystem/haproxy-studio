@@ -139,8 +139,13 @@ class Importer:
         if sum(s['type']=='defaults' for s in parsed)>1:return base,managed,[],[dict(name='defaults',reason='Несколько секций defaults требуют ручного сопоставления наследования.')]
         for section in parsed:
             if section['type']=='defaults':defaults=active(section)
+        from .acl_import import discover as discover_acl
+        adopted,handled,acl_warnings=discover_acl(self.manager,base,parsed,managed)
+        candidates.extend(adopted)
+        warnings.extend(acl_warnings)
         for front in parsed:
             if front['type']!='frontend' or front['name'].startswith('studio_fe_'):continue
+            if any(index in handled for index,_ in front['lines']):continue
             try:
                 commands=active(front)
                 if len(names[front['name']])!=1:raise Unsupported('Неоднозначное имя frontend.')
@@ -219,7 +224,7 @@ class Importer:
 
     def scan(self,value):
         text,current,revision=self.source(value);base,managed,candidates,warnings=self.discover(text)
-        return dict(revision=revision,source=value.get('source','current'),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed')} for c in candidates],preserved=warnings,managed=len(managed),warnings=['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else [],limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Сложные ACL, Exchange по путям и TLS-мосты сохраняются ручными. Дополнительные .cfg не импортируются.')
+        return dict(revision=revision,source=value.get('source','current'),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed','anchors')} for c in candidates],preserved=warnings,managed=len(managed),warnings=['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else [],limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Доменные ACL с AND/OR и общими backend переносятся с сохранением исходных пулов и порядка правил. Сложные анонимные выражения и TLS-мосты остаются ручными. Дополнительные .cfg не импортируются.')
 
     def preview(self,value):
         text,current,revision=self.source(value)
@@ -235,7 +240,8 @@ class Importer:
             if c['id'] in ids:raise ValueError('Публикация уже перенесена.')
             c['model']['name']=renames.get(c['id'],c['name']);c['model']=self.manager.normalize(dict(c['model'],sni_domains=c['model']['domains']),c['id'])
             ids.add(c['id']);removed.update(c['removed'])
-        baseline=''.join(line if i not in removed else retained_comment(line) for i,line in enumerate(base.splitlines(keepends=True)))
+        anchors={index:anchor for c in chosen for index,anchor in c.get('anchors',{}).items()}
+        baseline=''.join(line if i not in removed else retained_comment(line)+anchors.get(i,'') for i,line in enumerate(base.splitlines(keepends=True)))
         candidate,notes=self.manager.render(baseline,managed+[c['model'] for c in chosen],probe=False)
         checked=self.engine.validate(candidate)
         checked['baseline']=self.engine.validate(current)

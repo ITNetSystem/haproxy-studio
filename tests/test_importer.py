@@ -37,9 +37,9 @@ class ImportTests(ServicesFixture):
     def test_http_redirect_import_has_no_backend_and_keeps_legacy_status(self):
         source=(self.manual().split(b'\nbackend website')[0]+b'\n').replace(b'use_backend website if site',b'http-request redirect scheme https code 302 if site')
         value,report=self.scan(source);self.assertEqual(1,len(report['candidates']),report);checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok'],checked['output']);model=clean(draft['raw'])[1][0];self.assertEqual('redirect',model['http_action']);self.assertEqual(302,model['redirect_code']);self.assertEqual([],model['backends'])
-    def test_rewrites_after_routes_and_global_redirects_are_not_bypassed(self):
-        for source in (self.manual().replace(b'backend website',b'    http-request set-header X-Test value\nbackend website'),self.manual().replace(b'    acl site',b'    http-request redirect scheme https code 301\n    acl site')):
-            value,report=self.scan(source);self.assertFalse(report['candidates']);self.assertTrue(report['preserved'])
+    def test_rewrites_after_routes_remain_manual_and_global_redirect_is_preserved(self):
+        value,report=self.scan(self.manual().replace(b'backend website',b'    http-request set-header X-Test value\nbackend website'));self.assertFalse(report['candidates']);self.assertTrue(report['preserved'])
+        source=self.manual().replace(b'    acl site',b'    http-request redirect scheme https code 301\n    acl site');value,report=self.scan(source);self.assertEqual(1,len(report['candidates']));checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok']);self.assertIn(b'http-request redirect scheme https code 301',draft['raw']);self.assertLess(draft['raw'].index(b'http-request redirect scheme https'),draft['raw'].index(b'use_backend website if st_'))
     def test_accept_proxy_requires_manual_destination_mapping(self):
         value,report=self.scan(self.manual().replace(b'bind 127.0.0.1:18443',b'bind 127.0.0.1:18443 accept-proxy'));self.assertFalse(report['candidates']);self.assertTrue(report['preserved'])
     def test_imported_tcp_cannot_silently_leave_original_listener(self):

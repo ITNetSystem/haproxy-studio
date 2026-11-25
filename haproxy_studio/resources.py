@@ -105,8 +105,12 @@ class Resources:
     def backends(self, readonly=False):
         revision=self.engine.snapshot()[1]
         sources=self.sources();items=[];references=[];dynamic=False
+        imported_pools=set()
         for file,source in sources.items():
-            managed=[(m.start(),m.end()) for m in BLOCK.finditer(source)]
+            blocks=list(BLOCK.finditer(source))
+            managed=[(m.start(),m.end()) for m in blocks]
+            for model in clean(encode(source))[1]:
+                if model.get('import_pool'):imported_pools.add((str(file),model['id'],model['import_pool']))
             headers=list(re.finditer(r'(?m)^[ \t]*(global|defaults|frontend|backend|listen|userlist|resolvers|peers|cache|program|ring|mailers)\b[^\n]*',source))
             for index,head in enumerate(headers):
                 end=headers[index+1].start() if index+1<len(headers) else len(source)
@@ -129,11 +133,15 @@ class Resources:
                 route=re.match(r'^\s*(use_backend|default_backend)\s+(\S+)',line)
                 if route:
                     if not re.fullmatch(r'[A-Za-z0-9_.:-]+',route[2]):dynamic=True
-                    references.append(dict(backend=route[2],source=file.name,section=section,line=number,file=str(file),offset=offset,length=len(line),managed=any(a<=offset<b for a,b in managed)))
+                    references.append(dict(service_id=next((m[1] for m in blocks if m.start()<=offset<m.end()),None),backend=route[2],source=file.name,section=section,line=number,file=str(file),offset=offset,length=len(line),managed=any(a<=offset<b for a,b in managed)))
                 offset+=len(line)
         for item in items:
             item['references']=[r for r in references if r['backend']==item['name']]
             item['blocked']='Этот пул обслуживает панель управления.' if item['protected'] else 'Пул принадлежит сервису мастера. Удалите его в разделе «Сервисы».' if item['managed'] else 'Есть динамический выбор backend. Измените конфигурацию вручную.' if dynamic else 'Есть правила сервиса мастера, ссылающиеся на этот пул.' if any(r['managed'] for r in item['references']) else ''
+        for item in items:
+            if not item['blocked'] and any(pool==item['name'] for _,_,pool in imported_pools):item['blocked']='Общий backend используется импортированными сервисами, включая выключенные. Сначала удалите их ссылки.'
+            supported=all(not r['managed'] or (r['file'],r['service_id'],item['name']) in imported_pools for r in item['references'])
+            item['edit_blocked']=('' if supported and not(item['protected'] or item['managed'] or dynamic) else item['blocked'])
         if self.engine.snapshot()[1]!=revision:raise Conflict('Конфигурация изменилась при чтении. Обновите список.')
         return dict(backends=items,revision=revision,read_only=readonly or self.engine.settings['read_only'])
 
@@ -206,7 +214,7 @@ class Resources:
         catalog=self.backends()
         if value.get('revision')!=catalog['revision']:raise Conflict('Конфигурация изменилась. Повторите проверку.')
         item=next((b for b in catalog['backends'] if b['id']==value.get('id')),None)
-        if not item or item['blocked']:raise ValueError(item['blocked'] if item else 'Backend не найден.')
+        if not item or item.get('edit_blocked',item['blocked']):raise ValueError(item.get('edit_blocked',item['blocked']) if item else 'Backend не найден.')
         source=self.sources()[Path(item['file'])];body=source[item['start']:item['end']]
         servers=list(re.finditer(r'(?m)^(\s*server\s+([A-Za-z0-9_.:-]+)\s+)([^\s#]+)',body))
         submitted=value.get('servers')

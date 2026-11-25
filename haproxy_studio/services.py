@@ -238,11 +238,19 @@ class ServiceManager:
         rows=self.engine.overview()['rows']
         runtime={m['id']:[row for row in rows if row['pxname']==backend_name(m) and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
         from .enterprise import route_key
+        from .acl_import import pool_servers
+        base_sections={s['name']:s for s in bindings(base) if s['type']=='backend'}
+        for m in models:
+            if m.get('import_pool') in base_sections:m['backends']=pool_servers(base_sections[m['import_pool']])
         route_runtime={m['id']:[dict(path=row['path'],action=row['action'],rows=[entry for entry in rows if entry['pxname']==backend_name(m,row) and entry['svname'] not in ('FRONTEND','BACKEND')]) for index,row in enumerate(m.get('routes',[]))] for m in models}
         from .monitoring import service_status
         statuses={m['id']:service_status(m,runtime[m['id']],route_runtime[m['id']]) for m in models}
         from .resources import Resources
         pools={b['name']:b for b in Resources(self.engine).backends()['backends']}
+        for m in models:
+            if m.get('import_pool') in pools:
+                m['import_pool_id']=pools[m['import_pool']]['id']
+                m['import_pool_blocked']=pools[m['import_pool']].get('edit_blocked',pools[m['import_pool']]['blocked'])
         from .discovery import discover
         inventory_raw=b'';source_spans=[];offset=1
         for file in self.engine.config_files():
@@ -255,7 +263,7 @@ class ServiceManager:
         if not self.engine.settings['read_only']:
             build=compatibility(self.engine.settings['haproxy_binary'],self.engine.command)
             diagnostic=dict(validation=self.engine.validate(raw),ssl_library=build['ssl_library'],ssl_issues=ssl_issues(raw,build))
-        return dict(diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']]['blocked'])) for item in discover(inventory_raw,rows,source_spans)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        return dict(diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
@@ -358,6 +366,12 @@ class ServiceManager:
                                 tls_add.setdefault(b['index'],set()).add(path)
         active=[m for m in models if m['enabled']]
         for i,model in enumerate(active):
+            if model.get('import_pool'):
+                from .acl_import import attach as attach_acl
+                if model['tls_mode']=='terminate':self.certificate_check(model)
+                attach_acl(self,base,parsed,model,add,models)
+                warnings.append('«'+model['name']+'»: используется общий backend '+model['import_pool']+'. Его параметры и исходные ACL frontend сохраняются. Изменение пула затронет все ссылающиеся публикации.')
+                continue
             http=PRESETS[model['protocol']][3]=='http'
             if model['tls_mode']=='terminate':self.certificate_check(model)
             for prior in active[:i]:
@@ -429,6 +443,7 @@ class ServiceManager:
         return encode(''.join(out)),warnings
 
     def backend(self,m):
+        if m.get('import_pool'):return ''
         from .enterprise import backends
         return '' if m.get('http_action')=='redirect' else backends(self,m)
 
@@ -489,7 +504,17 @@ class ServiceManager:
             data=dict(data)
             if existing and 'rdweb_client' not in existing and data.get('rdweb_client')==('standard' if data.get('protocol')=='rdweb' else 'none'):data.pop('rdweb_client')
             if not existing:data.setdefault('naming','readable')
+            if existing and existing.get('import_pool'):
+                allowed={'import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
+                for key,value in data.items():
+                    if key=='backends':
+                        from .acl_import import pool_servers
+                        current_pool=next((s for s in bindings(base) if s['type']=='backend' and s['name']==existing['import_pool']),None)
+                        if not current_pool or value!=pool_servers(current_pool):raise ValueError('Изменяйте серверы через редактор общего пула.')
+                        continue
+                    if key not in allowed and key in existing and value!=existing[key]:raise ValueError('Для ACL-публикации меняются имя и домены. Параметры общего пула меняйте через «Изменить адреса серверов», остальные политики — в исходной конфигурации.')
             model=self.normalize(data,identifier or secrets.token_hex(8))
+            if existing and existing.get('import_pool'):model['backends']=existing['backends']
             models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
             label=PRESETS[model['protocol']][0]
             summary=[('Изменить' if existing else 'Опубликовать')+' «'+model['name']+'»: '+label+'.',('Домен '+model['domain']+model['path']+', ' if model['domain'] else '')+'внешний TCP-порт '+str(model['port'])+'.','Серверы: '+', '.join(address(s['host'],s['port']) for s in model['backends'])+'.']

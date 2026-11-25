@@ -252,7 +252,7 @@ class Engine:
                     if not self.validate(draft['raw'])['ok']:raise ValueError('Новая конфигурация сертификата не прошла проверку.')
                 applied = self.command(self.settings['reload_command'], timeout=30).returncode == 0
                 applied = applied and self.command(self.settings['health_command']).returncode == 0
-                if applied and previous_worker and (draft.get('reason', '').startswith('service:') or draft.get('reason') == 'backend-delete'):
+                if applied and previous_worker and (draft.get('reason', '').startswith('service:') or draft.get('reason') in ('backend-delete','pool-edit')):
                     changed = False
                     for attempt in range(20):
                         try:

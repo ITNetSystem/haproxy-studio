@@ -6,6 +6,10 @@ def identities(models):
         result[backend_name(model)]=(model['name'],'')
         for route in model.get('routes',[]):
             if route['action']=='backend':result[backend_name(model,route)]=(model['name'],route['path'])
+    shared={}
+    for model in models:
+        if model.get('import_pool'):shared.setdefault(model['import_pool'],[]).append(model['name'])
+    for name,labels in shared.items():result[name]=(' / '.join(dict.fromkeys(labels)),'')
     return result
 
 def annotate(rows,sections,models):
@@ -30,7 +34,7 @@ def service_status(model,rows,routes):
     pools=[route['rows'] for route in routes if route['action']=='backend']
     if not (model.get('fallback_status') and model.get('routes')):pools.insert(0,rows)
     if not pools:return 'Маршруты настроены'
-    if model['health']=='none' and not any(route['action']=='backend' for route in routes):return 'Проверки выключены'
+    if model['health']=='none' and not model.get('import_pool') and not any(route['action']=='backend' for route in routes):return 'Проверки выключены'
     states=[pool_status(pool) for pool in pools]
     if all(state=='Сервер доступен' for state in states):return 'Сервер доступен'
     if any(state=='Сервер доступен' for state in states):return 'Частично доступен'
