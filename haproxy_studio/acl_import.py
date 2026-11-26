@@ -194,6 +194,13 @@ def normalize(data,m):
     template=data.get('import_domain_template','')
     original={d for slot in parsed for term in slot['terms'] for d in term['domains']}
     if not isinstance(template,str) or template and template not in original:raise ValueError('Выберите существующий домен как образец правил.')
+    overrides=data.get('import_paths',{})
+    if not isinstance(overrides,dict) or len(overrides)>64:raise ValueError('Некорректные настройки путей импортированной публикации.')
+    paths={}
+    for key,values in overrides.items():
+        if not isinstance(key,str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}',key) or not isinstance(values,list) or not 1<=len(values)<=64 or any(not isinstance(v,str) or len(v)>256 or not re.fullmatch(r'/[A-Za-z0-9/_~.\-?=&%]*',v) for v in values):raise ValueError('Укажите пути, начиная с /, без пробелов и директив HAProxy.')
+        paths[key]=values
+    if paths:m['import_paths']=paths
     m['import_domain_template']=template
     m['import_pool']=data['import_pool'];m['import_acl']=dict(listener_port=number(source.get('listener_port',m['port']),'Внутренний порт'),listener_address=str(source.get('listener_address',m['bind_address'])),frontend=source['frontend'],fetch=source['fetch'],slots=parsed)
     return m
@@ -215,11 +222,20 @@ def attach(manager,base,parsed,model,add,models=()):
     if extra and len(profiles)>1 and not model.get('import_domain_template'):raise ValueError('У доменов этого пула разные дополнительные ACL. Выберите существующий домен как образец правил для новых доменов.')
     template=model.get('import_domain_template') or model['import_acl']['slots'][0]['terms'][0]['domains'][0]
     available={p[1] for _,p in routing_commands(front) if p[0]=='acl' and len(p)>1}
+    from .import_settings import inspect as inspect_import
+    path_specs={p['name']:p for p in inspect_import(base,model)['paths']} if model.get('import_paths') else {}
+    if set(model.get('import_paths',{}))-set(path_specs):raise ValueError('ACL пути изменён или имеет сложный синтаксис. Повторите просмотр публикации.')
     for i,slot in enumerate(model['import_acl']['slots']):
         marker=ANCHOR+model['id']+' '+str(i)
         matches=[index for index,line in front['lines'] if line.strip()==marker]
         if len(matches)!=1:raise ValueError('Место импортированного ACL изменено вручную. Восстановите конфигурацию из истории.')
         body=''
+        replacements={}
+        for n,(name,values) in enumerate(model.get('import_paths',{}).items()):
+            spec=path_specs[name];owned='st_'+model['id']+'_slot'+str(i)+'_path'+str(n)
+            if owned in available:raise ValueError('Имя ACL пути уже определено вручную: '+owned)
+            replacements[name]=owned
+            body+='    acl '+owned+' '+spec['match']+(' -i ' if spec['ignore_case'] else ' ')+' '.join(values)+'\n'
         for j,term in enumerate(slot['terms']):
             domains=set(term['domains'])&current
             if template in term['domains']:domains|=extra
@@ -228,7 +244,8 @@ def attach(manager,base,parsed,model,add,models=()):
             acl='st_'+model['id']+'_slot'+str(i)+'_term'+str(j)
             if acl in available:raise ValueError('Имя управляемого ACL уже определено вручную: '+acl)
             body+='    acl '+acl+' '+model['import_acl']['fetch']+(' -i ' if term.get('ignore_case',True) else ' ')+' '.join(sorted(domains))+'\n'
-            body+='    use_backend '+model['import_pool']+' if '+acl+(' '+' '.join(term['tests']) if term['tests'] else '')+'\n'
+            tests=[('!' if t.startswith('!') else '')+replacements.get(t.lstrip('!'),t.lstrip('!')) for t in term['tests']]
+            body+='    use_backend '+model['import_pool']+' if '+acl+(' '+' '.join(tests) if tests else '')+'\n'
         if body:add(matches[0],model,'aclroute'+str(i),body)
     return front
 

@@ -178,7 +178,7 @@ class ServiceManager:
         for row in backends:
             if not isinstance(row,dict):raise ValueError('Некорректная строка сервера.')
             servers.append(dict(host=hostname(row.get('host','')),port=number(row.get('port',preset[2]),'Порт сервера'),weight=number(row.get('weight',1),'Вес',1,256),backup=row.get('backup',False) is True))
-        if servers and all(s['backup'] for s in servers):raise ValueError('Нужен хотя бы один основной сервер, не только резервные.')
+        if servers and all(s['backup'] for s in servers) and not data.get('import_pool'):raise ValueError('Нужен хотя бы один основной сервер, не только резервные.')
         balance=data.get('balance','roundrobin')
         if balance not in ('roundrobin','leastconn','source'):raise ValueError('Некорректная балансировка.')
         cidrs=data.get('allowed_ips','')
@@ -254,6 +254,8 @@ class ServiceManager:
             if m.get('import_pool') in pools:
                 m['import_pool_id']=pools[m['import_pool']]['id']
                 m['import_pool_blocked']=pools[m['import_pool']].get('edit_blocked',pools[m['import_pool']]['blocked'])
+                from .import_settings import inspect as inspect_import
+                m['import_settings']=inspect_import(base,m,models)
         from .discovery import discover
         inventory_raw=b'';source_spans=[];offset=1
         for file in self.engine.config_files():
@@ -504,23 +506,35 @@ class ServiceManager:
         else:
             if action!='upsert':raise ValueError('Неизвестное действие.')
             data=dict(data)
+            import_changes=data.pop('import_changes',None)
+            affected=[]
+            if import_changes and not (existing and existing.get('import_pool')):raise ValueError('Настройки общего пула доступны только импортированной публикации.')
             if existing and 'rdweb_client' not in existing and data.get('rdweb_client')==('standard' if data.get('protocol')=='rdweb' else 'none'):data.pop('rdweb_client')
             if not existing:data.setdefault('naming','readable')
             if existing and existing.get('import_pool'):
-                allowed={'service_type_override','import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
+                allowed={'import_paths','service_type_override','import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
                 for key,value in data.items():
                     if key=='backends':
                         from .acl_import import pool_servers
                         current_pool=next((s for s in bindings(base) if s['type']=='backend' and s['name']==existing['import_pool']),None)
                         if not current_pool or value!=pool_servers(current_pool):raise ValueError('Изменяйте серверы через редактор общего пула.')
                         continue
-                    if key not in allowed and key in existing and value!=existing[key]:raise ValueError('Для ACL-публикации меняются имя и домены. Параметры общего пула меняйте через «Изменить адреса серверов», остальные политики — в исходной конфигурации.')
+                    if key not in allowed and key in existing and value!=existing[key]:raise ValueError('Для ACL-публикации используйте поля доменов, путей и параметров общего backend. TLS-вход и сложные политики меняются в конфигурации frontend.')
+            if import_changes:
+                from .resources import Resources
+                pool=next((p for p in Resources(self.engine).backends()['backends'] if p['name']==existing['import_pool']),None)
+                if not pool or pool.get('edit_blocked',pool['blocked']):raise ValueError(pool.get('edit_blocked',pool['blocked']) if pool else 'Общий backend не найден.')
+                from .import_settings import patch as patch_import
+                base,affected=patch_import(base,existing,import_changes,models)
             model=self.normalize(data,identifier or secrets.token_hex(8))
-            if existing and existing.get('import_pool'):model['backends']=existing['backends']
+            if existing and existing.get('import_pool'):
+                from .acl_import import pool_servers
+                model['backends']=[dict(next((old for old in existing['backends'] if old['name']==row['name']),{}),**row) for row in pool_servers(next(s for s in bindings(base) if s['type']=='backend' and s['name']==existing['import_pool']))] if import_changes else existing['backends']
             models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
             from .service_types import classify
             label=classify(model,bindings(base),self.engine.settings)['label']
             summary=[('Изменить' if existing else 'Опубликовать')+' «'+model['name']+'»: '+label+'.',('Домен '+model['domain']+model['path']+', ' if model['domain'] else '')+'внешний TCP-порт '+str(model['port'])+'.','Серверы: '+', '.join(address(s['host'],s['port']) for s in model['backends'])+'.']
+            if import_changes:summary.append('Изменить параметры общего backend '+model['import_pool']+'. Связанные публикации: '+', '.join(affected)+'. Изменение затронет также ручные маршруты и default_backend, использующие этот пул.')
             if not model['enabled']:summary.append('Публикация будет выключена. Её порт и маршруты не активируются.')
             if model['redirect']:summary.append('HTTP на порту '+str(model['http_port'])+' → HTTPS на порту '+str(model['port'])+'.')
         owned=[b for section in bindings(decode(raw)) if section['name'].startswith('studio_fe_') for b in section['binds']]

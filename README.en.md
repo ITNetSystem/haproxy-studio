@@ -149,3 +149,5 @@ Version 0.10 makes routing service-centric: public addresses and port → actual
 Version 0.11 adds an explicit reviewed replacement of an existing HTTP(S) publication by RD Gateway/RD Web on the same domains and public port. It retains simple HTTP redirects optionally, requires acknowledgement that old HTTP path policy is removed, preserves source-IP restrictions by default and validates before atomic application. [Russian migration guide](docs/rd-gateway.ru.md#замена-уже-опубликованного-веб-портала-011).
 
 Version 0.11.1 adds a persisted RD Web entry-page choice: standard `/RDWeb/` by default, or HTML5 `/RDWeb/webclient/`. The selected URL appears in the wizard, service list and routes; a shared RD Gateway can also expose the portal link. TLS passthrough remains unchanged; root redirects belong in IIS.
+
+Imported ACL services now expose retained pool settings and scoped path edits in the wizard. Shared pool changes require explicit confirmation and a config preview. [Editing imported services (Russian)](docs/imported-service-editing.ru.md).

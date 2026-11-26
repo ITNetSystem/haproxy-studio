@@ -47,17 +47,22 @@ def generate(root):
     save('readable-sni',[data('imaps',naming='readable',sni_routing=True,sni_domains='app.example.test',sni_default=True)])
     # Lossless ACL adoption keeps shared pools and inserts each route in place.
     from haproxy_studio.importer import Importer,retained_comment
-    def save_acl(name,source):
+    def save_acl(name,source,edit=False):
         nonlocal count
         base,_,candidates,_=Importer(manager).discover(source)
         chosen=[c for c in candidates if c.get('anchors')]
         if not chosen:raise ValueError('ACL matrix fixture was not adopted')
         anchors={i:a for c in chosen for i,a in c['anchors'].items()}
         baseline=''.join(retained_comment(line)+anchors[i] if i in anchors else line for i,line in enumerate(base.splitlines(True)))
+        if edit:
+            from haproxy_studio.import_settings import patch
+            model=chosen[0]['model'];model['import_paths']={'owa':['/new-owa','/new-autodiscover']}
+            baseline,_=patch(baseline,model,dict(confirm=True,balance='leastconn',timeout_server='60m',health_method='HEAD',health_path='/owa/healthcheck.htm',health_status='200',servers=[dict(name='mailbox',host='192.0.2.99',port='443',inter='7s',weight='20')]),[c['model'] for c in chosen])
         raw,_=manager.render(baseline,[c['model'] for c in chosen],probe=False)
         (cases/(name+'.cfg')).write_text(decode(raw).replace(str(root),'/studio-check'));count+=1
     shared=BASE+'frontend mail_web\n bind 127.0.0.1:18080\n mode http\n acl first hdr(host),lower,field(1,:) -i app.example.test\n acl second hdr(host),lower,field(1,:) -i other.example.test\n acl owa path_beg -i /owa\n use_backend exchange if first owa\n use_backend exchange if second owa\nbackend exchange\n mode http\n balance source\n timeout server 500ms\n server mailbox 192.0.2.10:443 ssl verify none check inter 500ms slowstart 30s\n'
     save_acl('import-shared-domain-path',shared)
+    save_acl('import-edited-path-and-pool',shared,edit=True)
     save_acl('import-inline-domain-case',shared.replace('use_backend exchange if first owa','use_backend exchange if { hdr(host) -m str app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { hdr(host) -i other.example.test } owa'))
     save_acl('import-https-sni-http-pool',shared.replace('bind 127.0.0.1:18080','bind 127.0.0.1:18443 ssl crt '+str(cert)).replace('use_backend exchange if first owa','use_backend exchange if { ssl_fc_sni -i app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { ssl_fc_sni -i other.example.test } owa'))
     mixed=BASE+'frontend outer\n bind 0.0.0.0:443\n mode tcp\n tcp-request inspect-delay 5s\n tcp-request content accept if { req.ssl_hello_type 1 }\n acl first req_ssl_sni -i app.example.test\n acl second req.ssl_sni -i other.example.test\n use_backend bridge if first or second\nbackend bridge\n mode tcp\n server local 127.0.0.1:8443 send-proxy-v2\n'+shared[len(BASE):].replace('frontend mail_web\n bind 127.0.0.1:18080','frontend mail_web\n bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert))
