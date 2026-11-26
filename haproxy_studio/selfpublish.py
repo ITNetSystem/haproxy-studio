@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import shlex
 from urllib.parse import urlsplit
 from .core import Conflict
 
@@ -55,3 +56,29 @@ def install(engine,change):
         info=path.stat();os.chmod(name,info.st_mode);os.chown(name,info.st_uid,info.st_gid);os.replace(name,path)
     finally:Path(name).unlink(missing_ok=True)
     engine.settings['public_url']=change['origin']
+
+def protect_publication(engine,previous,candidate,files=None):
+    """Reject removing the local Studio destination from an existing publication."""
+    from .services import bindings
+    from .importer import endpoint
+    from .core import decode
+    def published(raw):
+        parsed=bindings(decode(raw));pools=set();refs=set();direct=False
+        for section in parsed:
+            for _,line in section['lines']:
+                try:words=shlex.split(line,comments=True)
+                except ValueError:continue
+                if len(words)>1 and words[0] in ('use_backend','default_backend'):refs.add(words[1])
+                if len(words)>2 and words[0]=='server':
+                    try:host,port=endpoint(words[2])
+                    except ValueError:continue
+                    if local_target(engine.settings,dict(backends=[dict(host=host,port=port)])):
+                        pools.add(section['name'])
+                        if section['type']=='listen':direct=True
+        return direct or bool(pools&refs)
+    changes=files or {}
+    before=previous;after=candidate
+    for file in engine.config_files()[1:]:
+        raw=file.read_bytes();before+=b'\n'+raw;after+=b'\n'+changes.get(str(file),raw)
+    if published(before) and not published(after):
+        raise ValueError('Новый конфиг удаляет публикацию самой HAProxy Studio. Применение остановлено, чтобы не потерять доступ к панели. Сохраните маршрут к локальной Studio на порту '+str(engine.settings['port'])+' и повторите проверку.')

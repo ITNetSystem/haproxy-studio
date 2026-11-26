@@ -98,6 +98,11 @@ class Engine:
     def validate(self, raw, files=None):
         if self.settings['read_only']:
             raise ValueError('Режим наблюдения: проверка и применение отключены.')
+        if files:self.checked_files(files)
+        from .selfpublish import protect_publication
+        try:protect_publication(self,self.config.read_bytes(),raw,files)
+        except ValueError as error:
+            return dict(ok=False,output=str(error),diagnostics=[dict(severity='ALERT',message=str(error))])
         if files:
             return self.validate_files(raw, files)
         fd, name = tempfile.mkstemp(prefix='.studio-check-', suffix='.cfg', dir=self.config.parent)
@@ -208,6 +213,8 @@ class Engine:
             if revision != draft['revision']:
                 raise Conflict('Конфигурация изменилась после проверки. Повторите проверку.')
             files = draft.get('files', {})
+            from .selfpublish import protect_publication
+            protect_publication(self,previous,draft['raw'],files)
             changes = self.checked_files(files)
             originals = {file: file.read_bytes() for file in changes}
             checked = self.validate(draft['raw'], files) if files else self.validate(draft['raw'])
