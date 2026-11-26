@@ -153,3 +153,5 @@ Version 0.11.1 adds a persisted RD Web entry-page choice: standard `/RDWeb/` by 
 Imported ACL services now expose retained pool settings and scoped path edits in the wizard. Shared pool changes require explicit confirmation and a config preview. [Editing imported services (Russian)](docs/imported-service-editing.ru.md).
 
 Version 0.16 preserves isolated complex pools and original TLS dependencies (`crt-list`, external and relative certificate paths) during ACL adoption. Indented section headers and malformed managed metadata handling are covered by regressions. [Project checks and limitations (Russian)](docs/project-check-0.16.ru.md).
+
+0.16.1 supports uploading a ready Studio config with existing managed services and zero new candidates. Explicit replacement confirmation, native validation, diff review and the normal backed-up Apply flow remain required; ready files are preserved byte for byte.

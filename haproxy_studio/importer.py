@@ -257,7 +257,7 @@ class Importer:
 
     def scan(self,value):
         text,current,revision=self.source(value);base,managed,candidates,warnings=self.discover(text)
-        return dict(revision=revision,source=value.get('source','current'),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed','anchors')} for c in candidates],preserved=warnings,managed=len(managed),warnings=self.certificate_warnings(base)+(['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else []),limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Доменные ACL с AND/OR и общими backend переносятся с сохранением исходных пулов и порядка правил. Сложные анонимные выражения и TLS-мосты остаются ручными. Дополнительные .cfg не импортируются.')
+        return dict(revision=revision,source=value.get('source','current'),ready_config=value.get('source')=='file' and bool(managed),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed','anchors')} for c in candidates],preserved=warnings,managed=len(managed),warnings=self.certificate_warnings(base)+(['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else []),limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Доменные ACL с AND/OR и общими backend переносятся с сохранением исходных пулов и порядка правил. Сложные анонимные выражения и TLS-мосты остаются ручными. Дополнительные .cfg не импортируются.')
 
     def preview(self,value):
         text,current,revision=self.source(value)
@@ -265,7 +265,7 @@ class Importer:
         if value.get('source')=='file' and value.get('replace_confirm') is not True:raise ValueError('Подтвердите замену основного конфига файлом.')
         base,managed,candidates,warnings=self.discover(text)
         selected=value.get('selected');renames=value.get('names',{})
-        if not isinstance(selected,list) or not selected or not all(isinstance(item,str) for item in selected) or len(selected)!=len(set(selected)) or not isinstance(renames,dict):raise ValueError('Выберите хотя бы одну публикацию без повторов.')
+        if not isinstance(selected,list) or (not selected and not (value.get('source')=='file' and managed)) or not all(isinstance(item,str) for item in selected) or len(selected)!=len(set(selected)) or not isinstance(renames,dict):raise ValueError('Выберите хотя бы одну публикацию без повторов.')
         chosen=[c for c in candidates if c['id'] in selected]
         if len(chosen)!=len(selected):raise ValueError('Список публикаций изменился. Повторите анализ.')
         ids={m['id'] for m in managed};removed=set()
@@ -279,8 +279,12 @@ class Importer:
             ids.add(c['id']);removed.update(c['removed'])
         anchors={index:anchor for c in chosen for index,anchor in c.get('anchors',{}).items()}
         baseline=''.join(line if i not in removed else retained_comment(line)+anchors.get(i,'') for i,line in enumerate(base.splitlines(keepends=True)))
-        candidate,notes=self.manager.render(baseline,managed+[c['model'] for c in chosen],probe=False)
+        if chosen:
+            candidate,notes=self.manager.render(baseline,managed+[c['model'] for c in chosen],probe=False)
+        else:
+            # A ready Studio file is already compiled. Preserve it byte for byte.
+            candidate,notes=encode(text),[]
         checked=self.engine.validate(candidate)
         checked['baseline']=self.engine.validate(current)
-        checked.update(changed=candidate!=current,diff=''.join(difflib.unified_diff(mask(current)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Импорт публикаций')),summary=['Перенести в «Сервисы»: '+c['model']['name']+'.' for c in chosen],warnings=notes+self.certificate_warnings(base)+['Нераспознанные и невыбранные правила сохранены. Проверка синтаксиса не подтверждает полную эквивалентность поведения; проверьте разницу перед применением.']+(['Основной конфиг будет заменён загруженным файлом. Сохранится резервная копия текущего конфига.'] if value.get('source')=='file' else []))
+        checked.update(changed=candidate!=current,diff=''.join(difflib.unified_diff(mask(current)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Импорт публикаций')),summary=([('Загрузить готовую конфигурацию Studio: '+str(len(managed))+' управляемых сервисов.')] if not chosen else ['Перенести в «Сервисы»: '+c['model']['name']+'.' for c in chosen]),warnings=notes+self.certificate_warnings(base)+['Нераспознанные и невыбранные правила сохранены. Проверка синтаксиса не подтверждает полную эквивалентность поведения; проверьте разницу перед применением.']+(['Основной конфиг будет заменён загруженным файлом. Сохранится резервная копия текущего конфига.'] if value.get('source')=='file' else []))
         return checked,dict(raw=candidate,revision=revision,reason='service:import')
