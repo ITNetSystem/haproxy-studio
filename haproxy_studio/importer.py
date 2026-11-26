@@ -224,6 +224,8 @@ class Importer:
                         candidates.append(dict(id=identifier,name=model['name'],frontend=front['name'],backend=backend['name'] if backend else 'HTTP redirect',protocol=PRESETS[protocol][0],domains=domains,port=bind['lo'],servers=[str(s['host'])+':'+str(s['port']) for s in model['backends']],model=model,removed=removed))
                     except (ValueError,TypeError,IndexError) as error:warnings.append(dict(name=front['name']+' → '+r[1],reason=str(error)))
             except (ValueError,TypeError,IndexError) as error:warnings.append(dict(name=front['name'],reason=str(error)))
+        from .service_types import classify
+        for candidate in candidates:candidate['classification']=classify(candidate['model'],parsed,self.engine.settings)
         return base,managed,candidates,warnings
 
     def certificate_warnings(self,base):
@@ -269,7 +271,11 @@ class Importer:
         ids={m['id'] for m in managed};removed=set()
         for c in chosen:
             if c['id'] in ids:raise ValueError('Публикация уже перенесена.')
-            c['model']['name']=renames.get(c['id'],c['name']);c['model']=self.manager.normalize(dict(c['model'],sni_domains=c['model']['domains']),c['id'])
+            c['model']['name']=renames.get(c['id'],c['name']);
+            types=value.get('types',{})
+            if not isinstance(types,dict):raise ValueError('Выберите типы сервисов из списка.')
+            if c['id'] in types:c['model']['service_type_override']=types[c['id']]
+            c['model']=self.manager.normalize(dict(c['model'],sni_domains=c['model']['domains']),c['id'])
             ids.add(c['id']);removed.update(c['removed'])
         anchors={index:anchor for c in chosen for index,anchor in c.get('anchors',{}).items()}
         baseline=''.join(line if i not in removed else retained_comment(line)+anchors.get(i,'') for i,line in enumerate(base.splitlines(keepends=True)))

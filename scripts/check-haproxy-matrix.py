@@ -41,6 +41,7 @@ def generate(root):
     save('preserve-layered-https',[data('https',https_frontend='local_tls',forward_headers=False)],layered)
     save('rdweb-auto-layered-https',[data('rdwebproxy',redirect=False)],layered)
     save('imported-tcp-fallback',[data('tcp',port=2222,tcp_frontend='legacy_tcp',forward_headers=False,health='tcp')],BASE+'frontend legacy_tcp\n    bind 0.0.0.0:2222\n    mode tcp\n    option tcplog\n')
+    save('service-type-label-keeps-https',[data('https',service_type_override='exchange')])
     save('readable-http',[data('https',naming='readable',name='Company website',backend_name='be_website',backends=[dict(name='web01',host='192.0.2.10',port=443)],upstream_tls=True,upstream_verify=False)])
     save('readable-exchange',[data('exchange',naming='readable',backend_name='be_exchange',fallback_status=503)])
     save('readable-sni',[data('imaps',naming='readable',sni_routing=True,sni_domains='app.example.test',sni_default=True)])

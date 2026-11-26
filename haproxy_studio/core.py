@@ -227,6 +227,13 @@ class Engine:
             if self.snapshot()[1] != revision:
                 raise Conflict('Обнаружено внешнее изменение. Повторите проверку.')
             if cert_change:(folder/'certificate.pem').write_bytes(cert_change['previous'])
+            if draft.get('metadata_only'):
+                from .service_types import type_only_change
+                if files or cert_change or draft.get('studio_origin') or not type_only_change(previous,draft['raw']):
+                    raise ValueError('Уточнение типа содержит изменения маршрутизации. Повторите проверку.')
+                self.atomic_write(draft['raw'])
+                self.audit('service-type',backup=backup)
+                return dict(ok=True,backup=backup,metadata_only=True,message='Тип сервиса обновлён. Маршрутизация не менялась; перезагрузка HAProxy не потребовалась.')
             previous_worker = None
             try:
                 found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
@@ -321,7 +328,9 @@ class Engine:
         from .services import clean
         from .monitoring import annotate
         from .routing import describe,publications
-        models=clean(raw)[1]
+        base,models=clean(raw)
+        from .service_types import annotate as annotate_types
+        annotate_types(models,base,self.settings)
         parsed=describe(raw,sections(raw),models)
         annotate(rows,parsed,models)
         return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])

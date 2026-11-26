@@ -220,7 +220,8 @@ class ServiceManager:
         from .preserve import normalize as preserve
         from .naming import normalize as normalize_names
         from .rdweb import normalize as normalize_rdweb
-        return normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model))))
+        from .service_types import normalize as normalize_type
+        return normalize_type(data,normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model)))))
 
     def certificate_path(self,name):
         if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Выберите сертификат из списка или загрузите PEM/CRT и ключ.')
@@ -235,6 +236,8 @@ class ServiceManager:
 
     def catalog(self):
         raw,revision=self.engine.snapshot();base,models=clean(raw)
+        from .service_types import annotate
+        annotate(models,base,self.engine.settings)
         rows=self.engine.overview()['rows']
         runtime={m['id']:[row for row in rows if row['pxname']==backend_name(m) and row['svname'] not in ('FRONTEND','BACKEND')] for m in models}
         from .enterprise import route_key
@@ -263,7 +266,7 @@ class ServiceManager:
         if not self.engine.settings['read_only']:
             build=compatibility(self.engine.settings['haproxy_binary'],self.engine.command)
             diagnostic=dict(validation=self.engine.validate(raw),ssl_library=build['ssl_library'],ssl_issues=ssl_issues(raw,build))
-        return dict(diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        return dict(diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans,self.engine.settings)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
@@ -504,7 +507,7 @@ class ServiceManager:
             if existing and 'rdweb_client' not in existing and data.get('rdweb_client')==('standard' if data.get('protocol')=='rdweb' else 'none'):data.pop('rdweb_client')
             if not existing:data.setdefault('naming','readable')
             if existing and existing.get('import_pool'):
-                allowed={'import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
+                allowed={'service_type_override','import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
                 for key,value in data.items():
                     if key=='backends':
                         from .acl_import import pool_servers
@@ -515,7 +518,8 @@ class ServiceManager:
             model=self.normalize(data,identifier or secrets.token_hex(8))
             if existing and existing.get('import_pool'):model['backends']=existing['backends']
             models=[model if m['id']==model['id'] else m for m in models] if existing else models+[model]
-            label=PRESETS[model['protocol']][0]
+            from .service_types import classify
+            label=classify(model,bindings(base),self.engine.settings)['label']
             summary=[('Изменить' if existing else 'Опубликовать')+' «'+model['name']+'»: '+label+'.',('Домен '+model['domain']+model['path']+', ' if model['domain'] else '')+'внешний TCP-порт '+str(model['port'])+'.','Серверы: '+', '.join(address(s['host'],s['port']) for s in model['backends'])+'.']
             if not model['enabled']:summary.append('Публикация будет выключена. Её порт и маршруты не активируются.')
             if model['redirect']:summary.append('HTTP на порту '+str(model['http_port'])+' → HTTPS на порту '+str(model['port'])+'.')
@@ -565,6 +569,11 @@ class ServiceManager:
                 draft['studio_origin']=change
                 checked['changed']=True
                 checked['summary'].append('После успешного применения public_url → '+change['origin']+'. Войдите по новому адресу; старый адрес больше не принимается.')
+        from .service_types import type_only_change
+        if not draft.get('studio_origin') and type_only_change(raw,candidate):
+            draft['metadata_only']=True
+            checked['metadata_only']=True
+            checked['summary'].append('Уточнение типа: маршрутизация не меняется, перезагрузка HAProxy не требуется.')
         return checked,draft
 
     def preview_names(self,revision):

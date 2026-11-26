@@ -135,5 +135,5 @@ def publications(models,rows,sections):
                 item=(server.get('name','node'+str(i+1)),address(server['host'],server['port']))
                 if item not in seen:server_labels.append(dict(name=item[0],address=item[1]));seen.add(item)
         if model.get('http_action')=='redirect':destinations=[model.get('http_redirect_location') or 'HTTPS того же домена'];connection='HTTP-перенаправление'
-        result.append(dict(id=model['id'],name=model['name'],connection=connection,source=source,port=model['port'],destinations=destinations,status=service_status(model,runtime_pool,routes),enabled=model['enabled'],rules=cards,backend_names=[model['import_pool']] if model.get('import_pool') else pool_names(model),servers=server_labels))
+        result.append(dict(id=model['id'],name=model['name'],connection=connection,classification=model.get('classification'),service_label=model.get('classification',{}).get('label',PRESETS[model['protocol']][0]),source=source,port=model['port'],destinations=destinations,status=service_status(model,runtime_pool,routes),enabled=model['enabled'],rules=cards,backend_names=[model['import_pool']] if model.get('import_pool') else pool_names(model),servers=server_labels))
     return result

@@ -1,6 +1,10 @@
 # HAProxy Studio
 
 
+## Service recognition in 0.14
+
+One classifier identifies application purpose across all 24 wizard types using scoped routes, health checks and ports. It also classifies existing imports without rewriting configuration. Ambiguous services can be labelled manually at import or in the service editor; transport and routing remain unchanged. See [the recognition guide](docs/service-recognition.ru.md).
+
 ## Publication and import fixes in 0.13.1
 
 HTTPS publication now discovers a proven local TLS listener behind TCP/SNI. Existing web portals can be explicitly replaced with the RD Web redirect preset. Expired certificates on an unchanged shared frontend are reported separately during ACL import; invalid candidate configurations remain blocked.
