@@ -118,7 +118,7 @@ def discover(manager,base,parsed,existing=()):
         for target,routes in grouped.items():
             # Keep the established fully typed importer for simple isolated pairs.
             references=[line for s in parsed for _,line in s['lines'] if re.match(r'\s*(?:use_backend|default_backend)\s+'+re.escape(target)+r'(?:\s|$)',line)]
-            special=complex_front or any(m.get('import_pool')==target for m in existing) or len(references)>1 or any(len(p)!=4 for _,p in routes) or any(re.match(r'\s*http-request\s+redirect\b',line) for _,line in front['lines'])
+            special=(bind['tls'] and len(re.findall(r'\bcrt\s+',bind['line']))>1) or complex_front or any(m.get('import_pool')==target for m in existing) or len(references)>1 or any(len(p)!=4 for _,p in routes) or any(re.match(r'\s*http-request\s+redirect\b',line) for _,line in front['lines'])
             if not special:continue
             try:
                 pool=names.get(target,[])
@@ -128,7 +128,8 @@ def discover(manager,base,parsed,existing=()):
                     branches,fetch=terms(p,acls);fetches.add(fetch);slots.append(dict(line=index,terms=branches))
                 if len(fetches)!=1:raise Unsupported('Маршруты используют разные способы сопоставления доменов.')
                 fetch=fetches.pop();http=front['mode']=='http'
-                if http!=fetch.startswith('hdr(host)'):raise Unsupported('Доменный ACL не соответствует режиму входа.')
+                if http and not(fetch.startswith('hdr(host)') or bind['tls'] and fetch=='ssl_fc_sni'):raise Unsupported('Доменный ACL не соответствует режиму входа.')
+                if not http and fetch.startswith('hdr(host)'):raise Unsupported('HTTP Host ACL не соответствует TCP-входу.')
                 if not http and (fetch=='ssl_fc_sni')!=bind['tls']:raise Unsupported('SNI не соответствует TLS-режиму bind.')
                 protocol='https' if http and bind['tls'] else 'http' if http else 'tls'
                 if not http and not bind['tls']:mode='passthrough'
@@ -161,7 +162,6 @@ def discover(manager,base,parsed,existing=()):
                     elif 'accept-proxy' in bind['line'].split():raise Unsupported('Не подтверждён внешний TCP/SNI-вход и PROXY protocol для внутреннего HTTPS.')
                 elif 'accept-proxy' in bind['line'].split():raise Unsupported('accept-proxy без проверенного HTTPS-моста остаётся ручным.')
                 model=manager.normalize(data,identifier)
-                if bind['tls']:manager.certificate_check(model)
                 anchors={slot['line']:ANCHOR+identifier+' '+str(i)+'\n' for i,slot in enumerate(slots)}
                 result.append(dict(id=identifier,name=target,frontend=front['name'],backend=target,protocol='ACL → общий пул (параметры backend сохраняются)',domains=domains,port=data['port'],servers=[s['host']+':'+str(s['port']) for s in data['backends']],model=model,removed=set(anchors),anchors=anchors))
                 handled.update(anchors)
@@ -209,6 +209,8 @@ def attach(manager,base,parsed,model,add,models=()):
         resolved=resolve_bridge(model,parsed,models)
         if not resolved or resolved[0]['name']!=front['name']:raise ValueError('Связь внешнего SNI-входа и внутреннего HTTPS изменилась.')
     current=set(model['domains']);original={d for slot in model['import_acl']['slots'] for term in slot['terms'] for d in term['domains']};extra=current-original
+    if extra and model['tls_mode']=='terminate':
+        manager.certificate_check(dict(model,domains=sorted(extra)))
     profiles={(t.get('ignore_case',True),tuple(t['tests'])) for slot in model['import_acl']['slots'] for t in slot['terms']}
     if extra and len(profiles)>1 and not model.get('import_domain_template'):raise ValueError('У доменов этого пула разные дополнительные ACL. Выберите существующий домен как образец правил для новых доменов.')
     template=model.get('import_domain_template') or model['import_acl']['slots'][0]['terms'][0]['domains'][0]
@@ -248,9 +250,10 @@ def resolve_bridge(model,parsed,models=()):
         if len(p)<3 or p[2]!=expected or 'ssl' in p[3:]:continue
         if any(x in p[3:] for x in ('send-proxy','send-proxy-v2'))!=('accept-proxy' in bind['line'].split()):continue
         candidates.append(pool['name'])
+    from .services import overlaps
     domains=set(model['domains']);matches=[]
     for outer in parsed:
-        if outer['type']!='frontend' or outer['mode']!='tcp' or not any(b['lo']==b['hi']==model['port'] and b['host']==model['bind_address'] and not b['tls'] for b in outer['binds']):continue
+        if outer['type']!='frontend' or outer['mode']!='tcp' or not any(b['lo']==b['hi']==model['port'] and overlaps(b['host'],model['bind_address']) and (model['bind_address'] not in ('*','0.0.0.0','::') or b['host'] in ('*','0.0.0.0','::')) and not b['tls'] for b in outer['binds']):continue
         commands=routing_commands(outer)
         acls={};routes=[];fallback=None
         for _,p in commands:

@@ -1,6 +1,10 @@
 # HAProxy Studio
 
 
+## Publication and import fixes in 0.13.1
+
+HTTPS publication now discovers a proven local TLS listener behind TCP/SNI. Existing web portals can be explicitly replaced with the RD Web redirect preset. Expired certificates on an unchanged shared frontend are reported separately during ACL import; invalid candidate configurations remain blocked.
+
 ## Shared backend and ACL import
 
 Version 0.13 adopts finite Host/SNI ACLs with AND/OR, bounded negation and named path/IP predicates while retaining shared backends verbatim. Routes keep their original positions; pool addresses are edited separately. See [the Russian guide and limitations](docs/acl-import.ru.md).

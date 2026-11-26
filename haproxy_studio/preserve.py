@@ -72,30 +72,30 @@ def normalize(manager,data,m):
     from .acl_import import normalize as normalize_acl_import
     return normalize_acl_import(data,m)
 
-def resolve_https(model,parsed):
-    """Prove public TCP default -> local raw-TLS bridge -> named HTTP TLS listener."""
+def resolve_https(model,parsed,models=()):
+    """Select a direct HTTPS listener or prove the public SNI -> local TLS path."""
     from .services import overlaps
+    from .acl_import import resolve_bridge
     name=model.get('https_frontend')
-    if not name:return None
-    matches=[s for s in parsed if s['type']=='frontend' and s['name']==name and s['mode']=='http']
-    if len(matches)!=1:raise ValueError('Выбранный HTTP frontend не найден.')
-    target=matches[0];binds=[b for b in target['binds'] if b['tls'] and b['lo']==b['hi']]
-    if len(binds)!=1:raise ValueError('Для выбранного HTTPS-входа нужен один однозначный TLS bind.')
-    bind=binds[0]
-    if bind['lo']==model['port']:return target,bind,False
-    if bind['host'] not in ('127.0.0.1','::1'):raise ValueError('Внутренний TLS-вход должен слушать loopback.')
-    for outer in parsed:
-        if outer['type']!='frontend' or outer['mode']!='tcp' or not any(b['lo']<=model['port']<=b['hi'] and not b['tls'] and overlaps(model['bind_address'],b['host']) and (model['bind_address'] not in ('*','0.0.0.0','::') or b['host'] in ('*','0.0.0.0','::')) for b in outer['binds']):continue
-        defaults=[line.strip().split()[1] for _,line in outer['lines'] if re.match(r'\s*default_backend\s+\S+',line)]
-        for backend in parsed:
-            if backend['type']!='backend' or backend['name'] not in defaults or backend['mode']!='tcp':continue
-            servers=[line.strip().split() for _,line in backend['lines'] if re.match(r'\s*server\s+',line)]
-            if len(servers)!=1:continue
-            parts=servers[0]
-            if parts[2] not in (bind['host']+':'+str(bind['lo']),'['+bind['host']+']:'+str(bind['lo'])) or 'ssl' in parts:continue
-            sending=any(x in parts for x in ('send-proxy','send-proxy-v2'))
-            if sending!=('accept-proxy' in bind['line'].split()):raise ValueError('PROXY protocol на TLS-мосте и внутреннем bind должен совпадать.')
-            domains=model.get('domains') or [model['domain']]
-            if any('req.ssl_sni' in line and any(d in re.findall(r'[a-z0-9-]+(?:\.[a-z0-9-]+)+',line.lower()) for d in domains) for _,line in outer['lines']):raise ValueError('Домен уже направляется внешним SNI-входом на другой backend.')
-            return target,bind,True
-    raise ValueError('Не подтверждён путь внешнего TCP-порта к выбранному внутреннему TLS-входу. Проверьте default_backend и локальный сервер-мост.')
+    if not name:
+        tcp=[s for s in parsed if s['type']=='frontend' and s['mode']=='tcp' and any(not b['tls'] and b['lo']<=model['port']<=b['hi'] and overlaps(model['bind_address'],b['host']) for b in s['binds'])]
+        if not tcp:return None
+    targets=[s for s in parsed if s['type']=='frontend' and s['mode']=='http' and (not name or s['name']==name)]
+    if name and len(targets)!=1:raise ValueError('Выбранный HTTP frontend не найден.')
+    matches=[]
+    for target in targets:
+        binds=[b for b in target['binds'] if b['tls'] and b['lo']==b['hi']]
+        if len(binds)!=1:
+            if name:raise ValueError('Для выбранного HTTPS-входа нужен один однозначный TLS bind.')
+            continue
+        bind=binds[0]
+        if name and bind['lo']==model['port']:return target,bind,False
+        if bind['host'] not in ('127.0.0.1','::1'):continue
+        trial=dict(model,import_acl=dict(frontend=target['name'],listener_port=bind['lo'],listener_address=bind['host']))
+        resolved=resolve_bridge(trial,parsed,models)
+        if resolved:matches.append(resolved)
+    if len(matches)==1:
+        model['https_frontend']=matches[0][0]['name']
+        return matches[0]
+    if len(matches)>1:raise ValueError('Для домена подтверждены несколько внутренних HTTPS-входов: '+', '.join(s['name'] for s,_,_ in matches)+'. Выберите нужный вход на шаге «Адреса и защита».')
+    raise ValueError('На внешнем порту работает TCP/SNI, но путь этого домена к внутреннему HTTPS не подтверждён. Проверьте SNI-маршрут, локальный TLS-мост и соответствие PROXY protocol. Существующую SNI-публикацию этого домена нужно изменить или явно заменить.')

@@ -199,6 +199,10 @@ class Importer:
                             target=names.get(r[1],[])
                             if len(target)!=1 or target[0]['type']!='backend':raise Unsupported('Backend отсутствует или его имя неоднозначно.')
                             backend=target[0]
+                            if front['mode']=='tcp':
+                                from .acl_import import pool_servers
+                                servers=pool_servers(backend)
+                                if len(servers)==1 and any(servers[0]['host']==b['host'] and servers[0]['port']==b['lo'] for s in parsed if s['mode']=='http' for b in s['binds'] if b['tls'] and b['host'] in ('127.0.0.1','::1')):raise Unsupported('Служебный TCP → локальный HTTPS-мост сохраняется в конфигурации; его не нужно переносить как отдельное приложение.')
                             if backend['mode']!=front['mode']:raise Unsupported('Режимы frontend и backend различаются.')
                             references=[(s,index) for s in parsed for index,p in _routing_commands(s) if p[0] in ('use_backend','default_backend') and len(p)>1 and p[1]==r[1]]
                             if len(references)!=1:raise Unsupported('Backend используется несколькими маршрутами; нужен ручной перенос.')
@@ -222,9 +226,36 @@ class Importer:
             except (ValueError,TypeError,IndexError) as error:warnings.append(dict(name=front['name'],reason=str(error)))
         return base,managed,candidates,warnings
 
+    def certificate_warnings(self,base):
+        from .certificate_info import metadata
+        import shlex
+        known={};warnings=[];seen=set()
+        for section in bindings(base):
+            for bind in section['binds']:
+                if not bind['tls']:continue
+                try:tokens=shlex.split(bind['line'],comments=True)
+                except ValueError:continue
+                for index,token in enumerate(tokens[:-1]):
+                    if token!='crt':continue
+                    path=Path(tokens[index+1])
+                    if not path.is_absolute():continue
+                    paths=sorted(path.glob('*.pem')) if path.is_dir() else [path]
+                    for file in paths:
+                        key=(section['name'],str(file))
+                        if key in seen:continue
+                        seen.add(key)
+                        if str(file) not in known:known[str(file)]=metadata(self.engine,file)
+                        item=known[str(file)]
+                        if not item['readable']:problem='не читается или отсутствует'
+                        elif item['expired']:problem='истёк'
+                        elif item['not_yet_valid']:problem='ещё не действует'
+                        else:continue
+                        warnings.append('Общий TLS-вход '+section['name']+': сертификат '+file.name+' '+problem+'. Это зависимость входа, а не ошибка отдельного backend. Импорт сохраняет сертификат; проверьте его замену отдельно. Невалидная конфигурация HAProxy не будет применена.')
+        return warnings
+
     def scan(self,value):
         text,current,revision=self.source(value);base,managed,candidates,warnings=self.discover(text)
-        return dict(revision=revision,source=value.get('source','current'),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed','anchors')} for c in candidates],preserved=warnings,managed=len(managed),warnings=['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else [],limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Доменные ACL с AND/OR и общими backend переносятся с сохранением исходных пулов и порядка правил. Сложные анонимные выражения и TLS-мосты остаются ручными. Дополнительные .cfg не импортируются.')
+        return dict(revision=revision,source=value.get('source','current'),fingerprint=hashlib.sha256(encode(text)).hexdigest(),candidates=[{k:v for k,v in c.items() if k not in ('model','removed','anchors')} for c in candidates],preserved=warnings,managed=len(managed),warnings=self.certificate_warnings(base)+(['Файл заменит основной конфиг целиком. Дополнительные .cfg останутся на сервере; сертификаты, ключи и другие файлы не переносятся.'] if value.get('source')=='file' else []),limit='Автоматически переносятся простые HTTP/HTTPS, SNI и TCP-маршруты с отдельными пулами, а также HTTP-редиректы. Доменные ACL с AND/OR и общими backend переносятся с сохранением исходных пулов и порядка правил. Сложные анонимные выражения и TLS-мосты остаются ручными. Дополнительные .cfg не импортируются.')
 
     def preview(self,value):
         text,current,revision=self.source(value)
@@ -245,5 +276,5 @@ class Importer:
         candidate,notes=self.manager.render(baseline,managed+[c['model'] for c in chosen],probe=False)
         checked=self.engine.validate(candidate)
         checked['baseline']=self.engine.validate(current)
-        checked.update(changed=candidate!=current,diff=''.join(difflib.unified_diff(mask(current)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Импорт публикаций')),summary=['Перенести в «Сервисы»: '+c['model']['name']+'.' for c in chosen],warnings=notes+['Нераспознанные и невыбранные правила сохранены. Проверка синтаксиса не подтверждает полную эквивалентность поведения; проверьте разницу перед применением.']+(['Основной конфиг будет заменён загруженным файлом. Сохранится резервная копия текущего конфига.'] if value.get('source')=='file' else []))
+        checked.update(changed=candidate!=current,diff=''.join(difflib.unified_diff(mask(current)[0].splitlines(True),mask(candidate)[0].splitlines(True),fromfile='Текущая версия',tofile='Импорт публикаций')),summary=['Перенести в «Сервисы»: '+c['model']['name']+'.' for c in chosen],warnings=notes+self.certificate_warnings(base)+['Нераспознанные и невыбранные правила сохранены. Проверка синтаксиса не подтверждает полную эквивалентность поведения; проверьте разницу перед применением.']+(['Основной конфиг будет заменён загруженным файлом. Сохранится резервная копия текущего конфига.'] if value.get('source')=='file' else []))
         return checked,dict(raw=candidate,revision=revision,reason='service:import')

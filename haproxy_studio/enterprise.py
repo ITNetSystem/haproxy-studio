@@ -42,7 +42,10 @@ def normalize(manager,data,m):
     if isinstance(extra,str):extra=re.split(r'[\s,;]+',extra.strip())
     if not isinstance(extra,list) or len(extra)>32:raise ValueError('Не более 32 сертификатов на публикацию.')
     m['certificates']=list(dict.fromkeys(([m['certificate']]+[x for x in extra if x]) if m['tls_mode']=='terminate' else []))
-    for name in m['certificates']:manager.certificate_path(name)
+    for name in m['certificates']:
+        if data.get('import_pool'):
+            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Некорректное имя сертификата исходного frontend.')
+        else:manager.certificate_path(name)
     m['path_ignore_case']=data.get('path_ignore_case',m['protocol']=='exchange') is True
     target=data.get('root_redirect','/owa' if m['protocol']=='exchange' else '')
     if not isinstance(target,str) or len(target)>1024:raise ValueError('Некорректный адрес перенаправления.')
@@ -102,12 +105,19 @@ def model_domains(m):return m.get('domains') or [m['domain']]
 
 def certificates(manager,m):
     files=[manager.certificate_path(name) for name in m.get('certificates',[m['certificate']])]
-    for file in files:
-        if manager.engine.command(['openssl','x509','-in',str(file),'-noout','-checkend','0']).returncode:raise ValueError('Сертификат '+file.name+' истёк или не читается.')
+    domains=m.get('domains') or ([m['domain']] if m.get('domain') else [])
+    def valid(file):
+        if manager.engine.command(['openssl','x509','-in',str(file),'-noout','-checkend','0']).returncode:return False
         start=manager.engine.command(['openssl','x509','-in',str(file),'-noout','-startdate']).stdout.decode().strip().partition('=')[2]
-        if not start or ssl.cert_time_to_seconds(start)>time.time():raise ValueError('Срок действия сертификата ещё не начался.')
-    for domain in m.get('domains') or ([m['domain']] if m.get('domain') else []):
-        if not any(manager.engine.command(['openssl','x509','-in',str(file),'-noout','-checkhost',domain]).returncode==0 for file in files):raise ValueError('Набор выбранных сертификатов не покрывает домен '+domain+'. Добавьте сертификат для этого имени.')
+        return bool(start and ssl.cert_time_to_seconds(start)<=time.time())
+    if not domains:
+        for file in files:
+            if not valid(file):raise ValueError('Сертификат '+file.name+' истёк, ещё не действует или не читается.')
+    for domain in domains:
+        matching=[file for file in files if manager.engine.command(['openssl','x509','-in',str(file),'-noout','-checkhost',domain]).returncode==0]
+        if not matching:raise ValueError('Набор выбранных сертификатов не покрывает домен '+domain+'. Добавьте сертификат для этого имени.')
+        invalid=[file for file in matching if not valid(file)]
+        if invalid:raise ValueError('Для домена '+domain+' выбран истёкший, ещё не действующий или нечитаемый сертификат: '+', '.join(file.name for file in invalid)+'. Замените его, чтобы HAProxy не выдавал этот сертификат по SNI.')
 
 def route_key(model,row):
     identity=row['path'].lower() if model.get('path_ignore_case') else row['path']

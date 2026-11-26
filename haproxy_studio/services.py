@@ -199,7 +199,7 @@ class ServiceManager:
         host_override=data.get('host_override','').strip() if http else ''
         if host_override:host_override=hostname(host_override,'Заголовок Host')
         certificate=data.get('certificate','') if mode=='terminate' else ''
-        if mode=='terminate':self.certificate_path(certificate)
+        if mode=='terminate' and not data.get('import_pool'):self.certificate_path(certificate)
         model=dict(id=identifier,name=name.strip(),protocol=protocol,enabled=data.get('enabled',True) is True,port=number(data.get('port',preset[1]),'Внешний порт'),bind_address=public,domain=domain,path=path,tls_mode=mode,certificate=certificate,backends=servers,balance=balance,allowed_ips=' '.join(networks),health=health,health_path=health_path,upstream_tls=upstream_tls,upstream_verify=data.get('upstream_verify',True) is True,upstream_name=upstream_name,host_override=host_override,redirect=http and mode=='terminate' and data.get('redirect',True) is True,http_port=number(data.get('http_port',80),'Порт HTTP'),strip_prefix=http and path!='/' and data.get('strip_prefix',False) is True,hsts=http and mode=='terminate' and data.get('hsts',False) is True,timeout=number(data.get('timeout',3600),'Таймаут',5,86400),check_interval=number(data.get('check_interval',5),'Интервал проверок',1,300),maxconn=number(data.get('maxconn',0),'Лимит на сервер',0,100000),proxy_protocol=data.get('proxy_protocol',False) is True)
         if protocol in ('rdgateway','rdweb'):
             if upstream_tls or model['proxy_protocol'] or health not in ('none','tcp'):raise ValueError('RD Gateway / RD Web: используйте TCP-проверку без дополнительного TLS и PROXY protocol до Windows.')
@@ -283,7 +283,7 @@ class ServiceManager:
             if model.get('tcp_frontend') and not http_redirect:
                 target=next((s for s in parsed if s['name']==model['tcp_frontend'] and s['mode']=='tcp'),None)
                 if not target or not any(b['lo']<=port<=b['hi'] and b['tls']==tls and overlaps(model['bind_address'],b['host']) for b in target['binds']):raise ValueError('Существующий TCP-вход не соответствует выбранным порту, адресу или TLS. Сначала согласуйте изменение входа в конфигурации.')
-            resolved=resolve_https(model,parsed+other) if tls and PRESETS[model['protocol']][3]=='http' else None
+            resolved=resolve_https(model,parsed+other,models) if tls and PRESETS[model['protocol']][3]=='http' else None
             layered=bool(resolved and resolved[2])
             if resolved:
                 model['listener_port']=resolved[1]['lo'];model['route_port']=model['port'] if 'accept-proxy' in resolved[1]['line'].split() else resolved[1]['lo'];port=resolved[1]['lo']
@@ -368,7 +368,6 @@ class ServiceManager:
         for i,model in enumerate(active):
             if model.get('import_pool'):
                 from .acl_import import attach as attach_acl
-                if model['tls_mode']=='terminate':self.certificate_check(model)
                 attach_acl(self,base,parsed,model,add,models)
                 warnings.append('«'+model['name']+'»: используется общий backend '+model['import_pool']+'. Его параметры и исходные ACL frontend сохраняются. Изменение пула затронет все ссылающиеся публикации.')
                 continue
