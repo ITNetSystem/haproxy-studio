@@ -63,6 +63,13 @@ def generate(root):
     shared=BASE+'frontend mail_web\n bind 127.0.0.1:18080\n mode http\n acl first hdr(host),lower,field(1,:) -i app.example.test\n acl second hdr(host),lower,field(1,:) -i other.example.test\n acl owa path_beg -i /owa\n use_backend exchange if first owa\n use_backend exchange if second owa\nbackend exchange\n mode http\n balance source\n timeout server 500ms\n server mailbox 192.0.2.10:443 ssl verify none check inter 500ms slowstart 30s\n'
     save_acl('import-shared-domain-path',shared)
     save_acl('import-edited-path-and-pool',shared,edit=True)
+    isolated=shared.replace(' use_backend exchange if second owa\n','').replace('if first owa','if first')
+    save_acl('import-isolated-complex-pool',isolated)
+    save_acl('import-indented-sections',shared.replace('frontend mail_web','  frontend mail_web').replace('\nbackend exchange','\n  backend exchange'))
+    listing=root/'crt-list.txt';listing.write_text('/studio-check/cert.pem\n')
+    save_acl('import-crt-list',shared.replace('bind 127.0.0.1:18080','bind 127.0.0.1:18443 ssl crt-list '+str(listing)))
+    relative=shared.replace('global\n','global\n tune.ssl.capture-cipherlist-size 800\n crt-base '+str(root)+'\n').replace('bind 127.0.0.1:18080','bind 127.0.0.1:18443 ssl crt cert.pem')
+    save_acl('import-relative-certificate',relative)
     save_acl('import-inline-domain-case',shared.replace('use_backend exchange if first owa','use_backend exchange if { hdr(host) -m str app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { hdr(host) -i other.example.test } owa'))
     save_acl('import-https-sni-http-pool',shared.replace('bind 127.0.0.1:18080','bind 127.0.0.1:18443 ssl crt '+str(cert)).replace('use_backend exchange if first owa','use_backend exchange if { ssl_fc_sni -i app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { ssl_fc_sni -i other.example.test } owa'))
     mixed=BASE+'frontend outer\n bind 0.0.0.0:443\n mode tcp\n tcp-request inspect-delay 5s\n tcp-request content accept if { req.ssl_hello_type 1 }\n acl first req_ssl_sni -i app.example.test\n acl second req.ssl_sni -i other.example.test\n use_backend bridge if first or second\nbackend bridge\n mode tcp\n server local 127.0.0.1:8443 send-proxy-v2\n'+shared[len(BASE):].replace('frontend mail_web\n bind 127.0.0.1:18080','frontend mail_web\n bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert))

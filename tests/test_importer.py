@@ -47,7 +47,7 @@ class ImportTests(ServicesFixture):
         value,report=self.scan(source);checked,draft=self.preview_import(value,report);self.config.write_bytes(draft['raw']);model=clean(draft['raw'])[1][0];model['port']=19444
         with self.assertRaises(ValueError):self.preview(model)
     def test_unknown_backend_policy_is_preserved(self):
-        source=self.manual().replace(b'    balance leastconn',b'    stick-table type ip size 100k expire 1h\n    balance leastconn');value,report=self.scan(source);self.assertFalse(report['candidates']);self.assertTrue(report['preserved']);self.assertEqual(source,self.config.read_bytes())
+        source=self.manual().replace(b'    balance leastconn',b'    stick-table type ip size 100k expire 1h\n    balance leastconn');value,report=self.scan(source);self.assertEqual(1,len(report['candidates']));checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok'],checked['output']);self.assertIn(b'backend website\n',draft['raw']);self.assertIn(b'stick-table type ip size 100k expire 1h',draft['raw']);self.assertEqual(source,self.config.read_bytes())
     def test_shared_backend_and_complex_acl_are_not_guessed(self):
         for source in (self.manual().replace(b'backend website',b'    default_backend website\nbackend website'),self.manual().replace(b'if site',b'if site { path_beg /owa }'),self.manual().replace(b'    use_backend',b'    http-request deny if site\n    use_backend')):
             value,report=self.scan(source);self.assertEqual([],report['candidates']);self.assertTrue(report['preserved'])
@@ -72,4 +72,4 @@ class ImportTests(ServicesFixture):
             with self.assertRaises(ValueError):Importer(self.manager).scan(dict(value,source='file',content=content))
     def test_unknown_server_flags_and_inherited_pool_settings_are_not_dropped(self):
         for source in (self.manual().replace(b'check inter 5s',b'check inter 5s slowstart 30s'),self.manual().replace(b'    timeout client',b'    default-server inter 10s\n    timeout client')):
-            value,report=self.scan(source);self.assertFalse(report['candidates']);self.assertTrue(report['preserved'])
+            value,report=self.scan(source);self.assertEqual(1,len(report['candidates']));checked,draft=self.preview_import(value,report);self.assertTrue(checked['ok'],checked['output']);self.assertIn(source[source.index(b'backend website\n'):],draft['raw']);self.assertEqual(source,self.config.read_bytes())

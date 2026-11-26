@@ -41,10 +41,10 @@ def normalize(manager,data,m):
     extra=data.get('certificates',[])
     if isinstance(extra,str):extra=re.split(r'[\s,;]+',extra.strip())
     if not isinstance(extra,list) or len(extra)>32:raise ValueError('Не более 32 сертификатов на публикацию.')
-    m['certificates']=list(dict.fromkeys(([m['certificate']]+[x for x in extra if x]) if m['tls_mode']=='terminate' else []))
+    m['certificates']=list(dict.fromkeys((([m['certificate']] if m['certificate'] or not data.get('import_pool') else [])+[x for x in extra if x]) if m['tls_mode']=='terminate' else []))
     for name in m['certificates']:
         if data.get('import_pool'):
-            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Некорректное имя сертификата исходного frontend.')
+            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+',name):raise ValueError('Некорректное имя сертификата исходного frontend.')
         else:manager.certificate_path(name)
     m['path_ignore_case']=data.get('path_ignore_case',m['protocol']=='exchange') is True
     target=data.get('root_redirect','/owa' if m['protocol']=='exchange' else '')

@@ -63,6 +63,8 @@ def clean(raw):
             found=re.search(r'^# studio-model (\S+)$',match[4],re.M)
             if not found:raise ValueError('Повреждены данные сервиса мастера.')
             model=unpacked(found[1])
+            if not isinstance(model,dict):raise ValueError('Повреждены данные сервиса: ожидается объект.')
+            if any(m['id']==match[1] for m in models):raise ValueError('Повторяющийся идентификатор сервиса в конфигурации.')
             if model.get('id')!=match[1]:raise ValueError('Повреждён идентификатор сервиса.')
             models.append(model)
     source=BLOCK.sub('',source)
@@ -101,7 +103,7 @@ def address(host,port):
 def bindings(source):
     lines=source.splitlines(keepends=True);result=[];current=None;default_mode='tcp';in_defaults=False
     for index,line in enumerate(lines):
-        found=HEADER.match(line)
+        found=HEADER.match(line.lstrip())
         if found:
             in_defaults=found[1]=='defaults'
             current=dict(name=found[2] or found[1],type=found[1],start=index,mode=default_mode,binds=[],lines=[])

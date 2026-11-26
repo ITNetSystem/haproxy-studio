@@ -151,3 +151,5 @@ Version 0.11 adds an explicit reviewed replacement of an existing HTTP(S) public
 Version 0.11.1 adds a persisted RD Web entry-page choice: standard `/RDWeb/` by default, or HTML5 `/RDWeb/webclient/`. The selected URL appears in the wizard, service list and routes; a shared RD Gateway can also expose the portal link. TLS passthrough remains unchanged; root redirects belong in IIS.
 
 Imported ACL services now expose retained pool settings and scoped path edits in the wizard. Shared pool changes require explicit confirmation and a config preview. [Editing imported services (Russian)](docs/imported-service-editing.ru.md).
+
+Version 0.16 preserves isolated complex pools and original TLS dependencies (`crt-list`, external and relative certificate paths) during ACL adoption. Indented section headers and malformed managed metadata handling are covered by regressions. [Project checks and limitations (Russian)](docs/project-check-0.16.ru.md).

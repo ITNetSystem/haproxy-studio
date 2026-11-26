@@ -119,6 +119,23 @@ def discover(manager,base,parsed,existing=()):
             # Keep the established fully typed importer for simple isolated pairs.
             references=[line for s in parsed for _,line in s['lines'] if re.match(r'\s*(?:use_backend|default_backend)\s+'+re.escape(target)+r'(?:\s|$)',line)]
             special=(bind['tls'] and len(re.findall(r'\bcrt\s+',bind['line']))>1) or complex_front or any(m.get('import_pool')==target for m in existing) or len(references)>1 or any(len(p)!=4 for _,p in routes) or any(re.match(r'\s*http-request\s+redirect\b',line) for _,line in front['lines'])
+            if not special:
+                # An isolated route may still need a retained pool: never drop
+                # slowstart, stick tables, inherited policy or fractional timeouts.
+                from .importer import pool as typed_pool,active
+                defaults=next((s for s in parsed if s['type']=='defaults'),None)
+                target_section=names.get(target,[])
+                if len(target_section)==1:
+                    try:typed_pool(manager,target_section[0],active(defaults) if defaults else [])
+                    except (ValueError,TypeError,IndexError):special=True
+                for _,route in routes:
+                    definitions=acls.get(route[3],[]) if len(route)==4 else []
+                    if len(definitions)!=1 or len(definitions[0])<5 or definitions[0][3]!='-i' or (front['mode']=='http' and bind['tls'] and definitions[0][2] in ('hdr(host)','ssl_fc_sni')):special=True
+                if bind['tls']:
+                    import shlex
+                    tls_tokens=shlex.split(bind['line'],comments=True)
+                    crt_paths=[tls_tokens[i+1] for i,t in enumerate(tls_tokens[:-1]) if t=='crt']
+                    if 'crt-list' in tls_tokens or not crt_paths or any(Path(p).parent!=Path(manager.engine.settings['certificate_dir']) or not p.endswith('.pem') for p in crt_paths):special=True
             if not special:continue
             try:
                 pool=names.get(target,[])
@@ -139,8 +156,10 @@ def discover(manager,base,parsed,existing=()):
                     import shlex
                     tokens=shlex.split(bind['line'],comments=True)
                     paths=[tokens[i+1] for i,t in enumerate(tokens[:-1]) if t=='crt']
-                    if not paths or any(Path(p).parent!=Path(manager.engine.settings['certificate_dir']) for p in paths):raise Unsupported('Для этого bind нужны явные PEM-файлы из каталога панели; crt-list остаётся ручным.')
-                    certificates=[Path(p).name for p in paths];certificate=certificates[0]
+                    # TLS dependencies stay in the original bind, including crt-list,
+                    # relative crt-base paths and directories outside Studio storage.
+                    certificates=list(dict.fromkeys(Path(p).name for p in paths if re.fullmatch(r'[A-Za-z0-9_.-]+',Path(p).name)))
+                    certificate=certificates[0] if certificates else ''
                 domains=list(dict.fromkeys(d for slot in slots for term in slot['terms'] for d in term['domains']))
                 identifier=hashlib.sha256(('acl-pool\0'+front['name']+'\0'+target).encode()).hexdigest()[:16]
                 imported=dict(listener_port=bind['lo'],listener_address=bind['host'],frontend=front['name'],fetch=fetch,slots=[dict(terms=s['terms']) for s in slots])
