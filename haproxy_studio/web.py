@@ -269,6 +269,10 @@ class Application:
                     from .replacement import preview as preview_replacement
                     checked,draft=preview_replacement(app.services,value.get('service'),value.get('revision'),value.get('target_id'),value.get('confirm'),value.get('keep_redirect',True))
                     return self.reply(200, app.store_draft(checked,draft,key))
+                if path == base + '/api/services/starttls/preview':
+                    from .starttls import preview as preview_starttls
+                    checked,draft=preview_starttls(app.services,value)
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/services/exchange/preview':
                     from .exchange_groups import preview as preview_exchange
                     checked,draft=preview_exchange(app.services,value)

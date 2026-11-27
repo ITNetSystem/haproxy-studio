@@ -46,3 +46,10 @@ class ExchangeGroupTests(ServicesFixture):
     def test_readonly_group_cannot_be_changed(self):
         c=self.adopt();self.settings['read_only']=True
         with self.assertRaises(ValueError):preview(self.manager,self.request(c))
+
+    def test_mail_attachment_uses_live_pool_ips_for_named_families(self):
+        c=self.adopt();base,models=clean(self.config.read_bytes())
+        for m in models:m['backends'][0]['host']='192.0.2.123'
+        mail=self.manager.normalize(self.data('submission',certificate='',backends=[dict(host='192.0.2.5',port=587)]),'f'*16)
+        result=groups(models+[mail],base,self.settings)
+        self.assertEqual(1,len(result));self.assertIn(mail['id'],result[0]['members'])

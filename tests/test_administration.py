@@ -45,7 +45,7 @@ class AdministrationTests(ServicesFixture):
             for endpoint in ('config','services','overview','certificates','backends'):
                 status,value,_=request(endpoint,session=first);self.assertEqual(200,status);self.assertTrue(value['read_only'])
             self.assertEqual(403,request('users',session=first)[0])
-            for endpoint in ('preview','apply','services/preview','services/check','services/import/scan','services/import/preview','services/names/preview','services/replace/preview','certificates/upload','certificates/manage','users/manage','backends/preview-delete'):
+            for endpoint in ('preview','apply','services/preview','services/starttls/preview','services/check','services/import/scan','services/import/preview','services/names/preview','services/replace/preview','certificates/upload','certificates/manage','users/manage','backends/preview-delete'):
                 self.assertEqual(403,request(endpoint,{},first)[0])
             self.assertEqual(200,request('account/password',dict(current='a secure password',password='updated secure password',confirmation='updated secure password'),first)[0])
             self.assertEqual(401,request('config',session=second)[0]);self.assertEqual(200,request('account',session=first)[0])

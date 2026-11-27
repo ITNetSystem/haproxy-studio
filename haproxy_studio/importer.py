@@ -86,6 +86,9 @@ def pool(manager,section,defaults):
                 if key=='backup':server['backup']=True
                 else:flags[{'send-proxy-v2':'proxy'}.get(key,key)]=True
                 i+=1;continue
+            if key=='port' and i+1<len(p):
+                if not p[i+1].isdigit() or int(p[i+1])!=port:raise Unsupported('Отдельный порт healthcheck требует ручного переноса.')
+                i+=2;continue
             if key in ('weight','inter','rise','fall','maxconn','verify','ca-file','sni','check-sni','verifyhost') and i+1<len(p):
                 value=p[i+1]
                 if key=='weight':server['weight']=int(value)

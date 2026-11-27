@@ -27,6 +27,8 @@ def normalize(manager,data,m):
     if m['https_frontend'] and not (http and m['tls_mode']=='terminate'):raise ValueError('Выбор внутреннего HTTPS-входа доступен только для HTTPS-сервиса.')
     m['forward_headers']=data.get('forward_headers',True) is True
     m['backend_forwardfor']=data.get('backend_forwardfor',False) is True
+    if 'log_global' in data:m['log_global']=data['log_global'] is True
+    if 'client_timeout' in data:m['client_timeout']=number(data['client_timeout'],'Таймаут клиента',5,86400)
     m['tunnel_timeout']=number(data.get('tunnel_timeout',m['timeout']),'Таймаут туннеля',5,86400)
     m['upstream_sni']=data.get('upstream_sni',True) is True
     if not m['upstream_sni']:m['upstream_name']=''

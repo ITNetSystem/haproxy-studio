@@ -97,6 +97,15 @@ def generate(root):
     with mock_patch.object(manager.engine,'validate',return_value=dict(ok=True,output='Container validation follows')):
         _,draft=group_preview(manager,dict(id=group['id'],revision=manager.engine.snapshot()[1],services=models))
     (cases/'exchange-group-edited.cfg').write_bytes(draft['raw']);count+=1;config.write_text(BASE)
+    # Reviewed migration of broken STARTTLS/SNI rules must remain portable too.
+    from haproxy_studio.starttls import inspect as inspect_starttls,preview as repair_starttls
+    config.write_text(BASE+'frontend mail_starttls\n bind 127.0.0.1:587\n mode tcp\n log global\n timeout client 1m\n use_backend farm_b if { ssl_fc_sni other.example.test }\n default_backend farm_a\nbackend farm_a\n mode tcp\n option smtpchk EHLO check\n server mail_a 192.0.2.10:587 check port 587\nbackend farm_b\n mode tcp\n option smtpchk EHLO check\n server mail_b 192.0.2.20:587 check port 587\n')
+    plan=inspect_starttls(manager)[0]
+    request=dict(frontend=plan['frontend'],revision=manager.engine.snapshot()[1],bindings=[dict(key=row['key'],address='127.0.0.1',port=19001+i) for i,row in enumerate(plan['rows'])])
+    original_render=manager.render
+    with mock_patch.object(manager.engine,'validate',return_value=dict(ok=True,output='Container validation follows')),mock_patch.object(manager,'render',side_effect=lambda base,models,**kwargs:original_render(base,models,probe=False)):
+        _,draft=repair_starttls(manager,request)
+    (cases/'starttls-repaired.cfg').write_text(decode(draft['raw']).replace(str(root),'/studio-check'));count+=1;config.write_text(BASE)
     return count
 
 def main():

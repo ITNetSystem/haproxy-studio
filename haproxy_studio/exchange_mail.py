@@ -8,23 +8,29 @@ def mail_protocol(model):
     value=model.get('classification',{}).get('id')
     return value if value in ('imaps','smtps','imap','submission') else model['protocol']
 
-def attach(result,models):
+def choose_group(groups,domains,hosts,addresses):
+    domain_matches=[g for g in groups if set(domains)&set(g['domains'])]
+    address_matches=[g for g in groups if hosts and any(hosts<=addresses.get(i,set()) for i in g['web_members'])]
+    if domain_matches and address_matches:
+        matches=[g for g in domain_matches if g in address_matches]
+    else:matches=domain_matches or address_matches
+    return matches[0] if len(matches)==1 else None
+
+def attach(result,models,pool_addresses=None):
     for m in models:
         if m['protocol']=='exchange' and not m.get('import_pool'):
             result.append(dict(id='exchange-'+m['id'],name=m['name'],members=[m['id']],roles={m['id']:'HTTPS'},domains=m['domains'],tls_mode=m['tls_mode'],frontend='',port=m['port'],enabled=m['enabled'],mixed_enabled=False,native=m['id']))
     for g in result:g['web_members']=list(g['members'])
     by_id={m['id']:m for m in models}
+    addresses={i:(pool_addresses or {}).get(row.get('import_pool'),{b['host'] for b in row['backends']}) for i,row in by_id.items()}
     for m in models:
         if mail_protocol(m) not in ('imaps','smtps','imap','submission'):continue
-        choices=[g for g in result if m.get('exchange_parent') in g['web_members']] if m.get('exchange_parent') else [g for g in result if set(m.get('domains',[]))&set(g['domains'])]
-        if not m.get('exchange_parent'):
-            hosts={b['host'] for b in m['backends']}
-            address_matches=[g for g in result if hosts and any(hosts<={b['host'] for b in by_id[i]['backends']} for i in g['web_members'])]
-            if len(choices)!=1:
-                narrowed=[g for g in choices if g in address_matches]
-                choices=narrowed if narrowed else address_matches
-        if len(choices)!=1:continue
-        g=choices[0];g['members'].append(m['id']);g['roles'][m['id']]=mail_protocol(m).upper()
+        if m.get('exchange_parent'):
+            choices=[g for g in result if m['exchange_parent'] in g['web_members']]
+            g=choices[0] if len(choices)==1 else None
+        else:g=choose_group(result,m.get('domains',[]),{b['host'] for b in m['backends']},addresses)
+        if not g:continue
+        g['members'].append(m['id']);g['roles'][m['id']]=mail_protocol(m).upper()
     by_id={m['id']:m for m in models}
     for g in result:
         states={by_id[i]['enabled'] for i in g['members']};g['enabled']=all(states);g['mixed_enabled']=len(states)>1
@@ -32,6 +38,7 @@ def attach(result,models):
 
 def preview(manager,value,revision,action='upsert'):
     from .exchange_groups import DraftEngine,groups
+    if not isinstance(value,dict) or action not in ('upsert','delete'):raise ValueError('Некорректное действие Exchange.')
     engine=manager.engine;raw,actual=engine.snapshot()
     if revision!=actual:raise Conflict('Конфигурация изменилась. Обновите сервисы.')
     base,models=clean(raw);group=next((g for g in groups(models,base,engine.settings) if g.get('native')==value['id']),None) if value.get('id') else None
@@ -40,11 +47,15 @@ def preview(manager,value,revision,action='upsert'):
     if not checked['ok']:return checked,draft
     child.engine.raw=draft['raw'];_,after=clean(draft['raw']);parent=value.get('id') or next(m['id'] for m in after if m['id'] not in {x['id'] for x in models})
     old={m['id']:m for m in models if group and m['id'] in group['members'] and mail_protocol(m) in ('imaps','smtps','imap','submission')}
-    if mail is None:mail=[dict(m,enabled=value.get('enabled',m['enabled'])) for m in old.values()]
+    if mail is None or action=='delete':mail=[dict(m,enabled=value.get('enabled',m['enabled'])) for m in old.values()]
     if not isinstance(mail,list) or len(mail)>16:raise ValueError('Некорректный список почтовых служб Exchange.')
     seen=set()
     for row in mail:
-        if not isinstance(row,dict) or mail_protocol(row) not in ('imaps','smtps','imap','submission'):raise ValueError('Поддерживаются IMAPS, SMTPS, IMAP и SMTP Submission.')
+        if not isinstance(row,dict):raise ValueError('Некорректная почтовая служба Exchange.')
+        previous=old.get(row.get('id'))
+        kind=mail_protocol(previous) if previous else row.get('protocol')
+        if kind not in ('imaps','smtps','imap','submission'):raise ValueError('Поддерживаются IMAPS, SMTPS, IMAP и SMTP Submission.')
+        if previous and row.get('protocol')!=previous['protocol']:raise ValueError('Нельзя незаметно менять протокол существующей почтовой службы.')
         if row.get('id') and (row['id'] not in old or row['id'] in seen):raise ValueError('Почтовая служба не принадлежит этому Exchange или повторяется.')
         if row.get('id'):seen.add(row['id'])
         row=dict(row,exchange_parent=parent)
@@ -64,12 +75,7 @@ def attach_inventory(groups,items,models):
     for group in groups:group['retained_mail']=[]
     for item in items:
         if item.get('classification',{}).get('id') not in ('smtp','submission','imap','imaps','smtps'):continue
-        choices=[g for g in groups if set(item.get('domains',[]))&set(g['domains'])]
-        if len(choices)!=1:
-            hosts={s['address'].rsplit(':',1)[0].strip('[]') for s in item['servers']}
-            address_matches=[g for g in groups if hosts and any(hosts<={b['host'] for b in by_id[i]['backends']} for i in g['web_members'])]
-            narrowed=[g for g in choices if g in address_matches]
-            choices=narrowed if narrowed else address_matches
-        if len(choices)==1:
-            group=choices[0];item['exchange_group']=group['id'];group['retained_mail'].append(item)
+        item.pop('exchange_group',None)
+        group=choose_group(groups,item.get('domains',[]),{s['address'].rsplit(':',1)[0].strip('[]') for s in item['servers']},{i:{b['host'] for b in row['backends']} for i,row in by_id.items()})
+        if group:item['exchange_group']=group['id'];group['retained_mail'].append(item)
     return items

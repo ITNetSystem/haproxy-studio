@@ -69,3 +69,21 @@ class ExchangeMailTests(ServicesFixture):
         self.assertEqual(['a'*16,'b'*16],groups([root,mail],'',self.settings)[0]['members'])
         other=dict(root,id='c'*16)
         self.assertTrue(all(mail['id'] not in g['members'] for g in groups([root,other,mail],'',self.settings)))
+
+    def test_conflicting_domain_and_pool_addresses_do_not_cross_link_farms(self):
+        a=self.manager.normalize(self.data('exchange',domain='app.example.test'),'a'*16)
+        b=self.manager.normalize(self.data('exchange',domain='other.example.test',backends=[dict(host='192.0.2.99',port=443)]),'b'*16)
+        mail=self.manager.normalize(self.data('imaps',sni_routing=True,sni_domains=['app.example.test'],backends=[dict(host='192.0.2.99',port=993)]),'c'*16)
+        self.assertTrue(all(mail['id'] not in g['members'] for g in groups([a,b,mail],'',self.settings)))
+
+    def test_delete_root_with_empty_mail_payload_deletes_all_managed_children(self):
+        value=self.data('exchange');value['exchange_mail']=[self.data('imap')]
+        checked,draft=preview(self.manager,value,self.engine.snapshot()[1]);self.assertTrue(checked['ok']);self.config.write_bytes(draft['raw'])
+        root=next(m for m in clean(draft['raw'])[1] if m['protocol']=='exchange')
+        checked,deleted=preview(self.manager,dict(root,exchange_mail=[]),self.engine.snapshot()[1],'delete')
+        self.assertTrue(checked['ok']);self.assertEqual([],clean(deleted['raw'])[1])
+
+    def test_bad_compound_payload_is_rejected_as_validation_error(self):
+        for value in (None,[],dict(self.data('exchange'),exchange_mail=[{}])):
+            with self.subTest(value=type(value)):
+                with self.assertRaises(ValueError):preview(self.manager,value,self.engine.snapshot()[1])

@@ -49,7 +49,12 @@ def groups(models,base,settings):
         ids=[m['id'] for m,_ in ordered];tenant=identity(entries[0][0])[0]
         result.append(dict(id='exchange-'+hashlib.sha256('\0'.join(sorted(ids)).encode()).hexdigest()[:16],name='Exchange — '+(tenant.upper() if tenant else sorted(domains)[0]),members=ids,roles={m['id']:role or m['name'] for m,role in ordered},domains=sorted({d for m,_ in entries for d in m.get('domains',[])}),tls_mode=key[3],frontend=key[0],port=entries[0][0]['port'],enabled=all(m['enabled'] for m,_ in entries),mixed_enabled=len({m['enabled'] for m,_ in entries})>1))
     from .exchange_mail import attach
-    return attach(result,models)
+    from .acl_import import pool_servers
+    actual={}
+    for name,pool in pools.items():
+        try:actual[name]={b['host'] for b in pool_servers(pool)}
+        except ValueError:continue
+    return attach(result,models,actual)
 
 class DraftEngine:
     def __init__(self,parent,raw):self.parent=parent;self.raw=raw

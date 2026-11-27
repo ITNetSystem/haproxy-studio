@@ -276,10 +276,12 @@ class ServiceManager:
         if not self.engine.settings['read_only']:
             build=compatibility(self.engine.settings['haproxy_binary'],self.engine.command)
             diagnostic=dict(validation=self.engine.validate(raw),ssl_library=build['ssl_library'],ssl_issues=ssl_issues(raw,build))
+        from .starttls import inspect as inspect_starttls
+        starttls_frontends=inspect_starttls(self)
         from .exchange_mail import attach_inventory
         discovered=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans,self.engine.settings)]
         attach_inventory(grouped_exchange,discovered,models)
-        return dict(exchange_groups=grouped_exchange,diagnostic=diagnostic,discovered_services=discovered,studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        return dict(starttls_frontends=starttls_frontends,exchange_groups=grouped_exchange,diagnostic=diagnostic,discovered_services=discovered,studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
@@ -422,7 +424,8 @@ class ServiceManager:
                 certs=list(dict.fromkeys(str(self.certificate_path(c)) for m in ordered for c in m.get('certificates',[m['certificate']])))
                 body+=' ssl '+ ' '.join('crt '+c for c in certs)
                 if http:body+=' alpn h2,http/1.1'
-            body+='\n    mode '+('http' if http else 'tcp')+'\n    timeout client '+str(first['timeout'])+'s\n'
+            body+='\n    mode '+('http' if http else 'tcp')+'\n    timeout client '+str(first.get('client_timeout',first['timeout']))+'s\n'
+            if first.get('log_global'):body+='    log global\n'
             if http:
                 rules=''.join(route(m,True) for m in spec['redirects'])+''.join(route(m) for m in spec['models'])
                 body+=''.join(line for line in rules.splitlines(True) if not line.lstrip().startswith(('use_backend ','default_backend ')))

@@ -13,6 +13,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Install validation tools
+        run: sudo apt-get update -qq && sudo apt-get install -y haproxy openssl
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check frontend syntax
+        run: for file in haproxy_studio/static/*.js; do node --check "$file"; done
       - run: python -m unittest discover -s tests -v
       - run: sh -n scripts/install.sh
   linux:

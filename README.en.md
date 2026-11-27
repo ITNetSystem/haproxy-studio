@@ -173,3 +173,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.21.1 prevents a new Exchange publication without an ID from matching an imported group without a native parent ID. New mail options start disabled and existing services remain isolated. All mail-add buttons include ports; endpoint labels distinguish external ports from destination servers. Routing warnings affect the Exchange card status. HTTPS listener selection is automatic by default, with manual selection under advanced options.
+
+
+0.22 adds a reviewed STARTTLS repair wizard under Services. It replaces supported legacy SNI-on-587/143 rules with dedicated managed TCP endpoints, retaining DAG nodes, independent timeouts and logging. Equal pools merge; every distinct destination needs explicit HAProxy bind address/port input. No network addresses are guessed or assigned. Grouping uses current pool addresses and rejects contradictory domain/IP associations. Compound deletion and request validation, container healthcheck and CI prerequisites were fixed. See the [repair guide](docs/starttls-repair.ru.md) and [audit scope/results](docs/audit-0.22.ru.md).
