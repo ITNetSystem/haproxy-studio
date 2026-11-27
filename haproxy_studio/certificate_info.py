@@ -2,9 +2,12 @@
 import re
 import ssl
 import time
+import subprocess
 
 def metadata(engine,path):
-    done=engine.command(['openssl','x509','-in',str(path),'-noout','-subject','-issuer','-dates','-ext','subjectAltName','-fingerprint','-sha256'])
+    try:done=engine.command(['openssl','x509','-in',str(path),'-noout','-subject','-issuer','-dates','-ext','subjectAltName','-fingerprint','-sha256'])
+    except (OSError,subprocess.SubprocessError):
+        return dict(domains=[],expired=False,not_yet_valid=False,fingerprint='',key_algorithm='',readable=False,not_after='',not_before='')
     text=done.stdout.decode('utf-8','replace')
     names=re.findall(r'DNS:([^,\s]+)',text)
     if not names:
@@ -16,7 +19,7 @@ def metadata(engine,path):
     fingerprint=re.search(r'Fingerprint=(.+)',text,re.I)
     public=engine.command(['openssl','x509','-in',str(path),'-noout','-text']).stdout.decode('utf-8','replace')
     algorithm=re.search(r'Public Key Algorithm:\s*(\S+)',public)
-    return dict(domains=names,expired=expired,not_yet_valid=not_yet_valid,fingerprint=fingerprint[1].strip() if fingerprint else '',key_algorithm=algorithm[1] if algorithm else '',readable=done.returncode==0)
+    return dict(domains=names,expired=expired,not_yet_valid=not_yet_valid,fingerprint=fingerprint[1].strip() if fingerprint else '',key_algorithm=algorithm[1] if algorithm else '',readable=done.returncode==0,not_after=expire[1].strip() if expire else '',not_before=start[1].strip() if start else '')
 
 def overlap(a,b):
     if a==b:return True

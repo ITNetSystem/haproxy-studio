@@ -171,7 +171,7 @@ class Application:
                         return self.reply(200, app.resources.certificates(readonly))
                     return self.reply(404, dict(error='Раздел не найден.'))
                 suffix = path[len(base):] if path.startswith(base) else None
-                names = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/manrope.ttf': 'manrope.ttf', '/manrope-OFL.txt': 'manrope-OFL.txt', '/preserve.js': 'preserve.js', '/import.js': 'import.js', '/services.js': 'services.js', '/import-settings.js': 'import-settings.js', '/exchange.js': 'exchange.js', '/admin.js': 'admin.js'}
+                names = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/manrope.ttf': 'manrope.ttf', '/manrope-OFL.txt': 'manrope-OFL.txt', '/preserve.js': 'preserve.js', '/import.js': 'import.js', '/services.js': 'services.js', '/import-settings.js': 'import-settings.js', '/exchange.js': 'exchange.js', '/admin.js': 'admin.js', '/service-tls.js': 'service-tls.js'}
                 if suffix in names:
                     file = STATIC / names[suffix]
                     content = file.read_bytes()

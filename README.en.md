@@ -182,3 +182,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.23 adds direct certificate upload in Certificates, including an empty certificate list. Replacement supports either a saved certificate or a new PEM/CRT+KEY/PFX/P12 upload. Upload alone leaves active publications unchanged; replacement requires the existing reviewed apply workflow. A canceled replacement retains the uploaded file for later use.
+
+
+0.24 adds read-only TLS/certificate details to all service cards, including grouped Exchange and legacy inventory. Domain coverage is derived from actual bind crt/crt-list references, with labels, expiry, key algorithms and uncertainty warnings; unrelated uploaded files are not assigned. Passthrough, STARTTLS and application encryption remain explicitly unverified on the backend. This is configuration/file inspection, not a public TLS handshake check.
