@@ -74,6 +74,25 @@ def generate(root):
     save_acl('import-https-sni-http-pool',shared.replace('bind 127.0.0.1:18080','bind 127.0.0.1:18443 ssl crt '+str(cert)).replace('use_backend exchange if first owa','use_backend exchange if { ssl_fc_sni -i app.example.test } owa').replace('use_backend exchange if second owa','use_backend exchange if { ssl_fc_sni -i other.example.test } owa'))
     mixed=BASE+'frontend outer\n bind 0.0.0.0:443\n mode tcp\n tcp-request inspect-delay 5s\n tcp-request content accept if { req.ssl_hello_type 1 }\n acl first req_ssl_sni -i app.example.test\n acl second req.ssl_sni -i other.example.test\n use_backend bridge if first or second\nbackend bridge\n mode tcp\n server local 127.0.0.1:8443 send-proxy-v2\n'+shared[len(BASE):].replace('frontend mail_web\n bind 127.0.0.1:18080','frontend mail_web\n bind 127.0.0.1:8443 accept-proxy ssl crt '+str(cert))
     save_acl('import-conditional-sni-proxy-shared-pool',mixed)
+    # The unified Exchange editor must emit one valid config for all path edits.
+    from unittest.mock import patch as mock_patch
+    from haproxy_studio.exchange_groups import groups,preview as group_preview
+    from haproxy_studio.acl_import import pool_servers
+    from haproxy_studio.services import clean,bindings
+    source=BASE+'frontend exchange_group\n bind 127.0.0.1:18080\n mode http\n acl domain hdr(host),lower,field(1,:) -i app.example.test\n'
+    back=''
+    for role in ('owa','autodiscover','mapi','ews'):
+        pool='be_exchange_demo_'+role
+        source+=' acl '+role+' path_beg -i /'+role+'\n use_backend '+pool+' if domain '+role+'\n'
+        back+='backend '+pool+'\n mode http\n option httpchk GET /'+role+'/healthcheck.htm\n server mail 192.0.2.10:443 ssl verify none check inter 500ms slowstart 30s\n'
+    save_acl('exchange-group-original',source+back)
+    compiled=(cases/'exchange-group-original.cfg').read_bytes();config.write_bytes(compiled)
+    baseline,models=clean(compiled);group=groups(models,baseline,settings)[0];pools={s['name']:s for s in bindings(baseline) if s['type']=='backend'}
+    for m in models:m['backends']=pool_servers(pools[m['import_pool']]);m['aliases']=['other.example.test']
+    models[0]['import_changes']=dict(confirm=True,timeout_server='90m')
+    with mock_patch.object(manager.engine,'validate',return_value=dict(ok=True,output='Container validation follows')):
+        _,draft=group_preview(manager,dict(id=group['id'],revision=manager.engine.snapshot()[1],services=models))
+    (cases/'exchange-group-edited.cfg').write_bytes(draft['raw']);count+=1;config.write_text(BASE)
     return count
 
 def main():

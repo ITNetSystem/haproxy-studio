@@ -171,7 +171,7 @@ class Application:
                         return self.reply(200, app.resources.certificates(readonly))
                     return self.reply(404, dict(error='Раздел не найден.'))
                 suffix = path[len(base):] if path.startswith(base) else None
-                names = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/manrope.ttf': 'manrope.ttf', '/manrope-OFL.txt': 'manrope-OFL.txt', '/preserve.js': 'preserve.js', '/import.js': 'import.js', '/services.js': 'services.js', '/import-settings.js': 'import-settings.js', '/admin.js': 'admin.js'}
+                names = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/manrope.ttf': 'manrope.ttf', '/manrope-OFL.txt': 'manrope-OFL.txt', '/preserve.js': 'preserve.js', '/import.js': 'import.js', '/services.js': 'services.js', '/import-settings.js': 'import-settings.js', '/exchange.js': 'exchange.js', '/admin.js': 'admin.js'}
                 if suffix in names:
                     file = STATIC / names[suffix]
                     content = file.read_bytes()
@@ -265,6 +265,10 @@ class Application:
                     from .replacement import preview as preview_replacement
                     checked,draft=preview_replacement(app.services,value.get('service'),value.get('revision'),value.get('target_id'),value.get('confirm'),value.get('keep_redirect',True))
                     return self.reply(200, app.store_draft(checked,draft,key))
+                if path == base + '/api/services/exchange/preview':
+                    from .exchange_groups import preview as preview_exchange
+                    checked,draft=preview_exchange(app.services,value)
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/services/preview':
                     checked, draft = app.services.preview(value.get('service', {}), value.get('revision'), value.get('action', 'upsert'))
                     return self.reply(200, app.store_draft(checked, draft, key))
