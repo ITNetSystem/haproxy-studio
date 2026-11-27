@@ -80,3 +80,16 @@ backend farm_b
         with patch.object(self.manager,'render') as render:
             with self.assertRaisesRegex(ValueError,r'\*:587.*dag_a.*farm_b'):preview(self.manager,request)
             render.assert_not_called()
+
+    def test_port_proposal_preserves_default_and_skips_configured_ports(self):
+        extra=b'frontend already_used\n bind 127.0.0.1:1587\n mode tcp\n default_backend farm_b\n'
+        self.config.write_bytes(self.source()+extra);before=self.config.read_bytes();plan=inspect(self.manager)[0]
+        self.assertEqual('',plan['error']);self.assertEqual([587,2587],[r['suggested_port'] for r in plan['rows']]);self.assertEqual(before,self.config.read_bytes())
+        request=dict(frontend=plan['frontend'],revision=self.engine.snapshot()[1],bindings=[dict(key=r['key'],address='127.0.0.1',port=r['suggested_port']) for r in plan['rows']])
+        checked,draft=preview(self.manager,request);self.assertTrue(checked['ok'],checked['output']);self.assertEqual([587,2587],[m['port'] for m in clean(draft['raw'])[1]]);self.assertTrue(all(b['port']==587 for m in clean(draft['raw'])[1] for b in m['backends']))
+
+    def test_imap_proposal_keeps_internal_143_for_all_dags(self):
+        self.config.write_bytes(self.source().replace(b'587',b'143').replace(b'option smtpchk EHLO haproxy-check',b'option tcp-check'))
+        plan=inspect(self.manager)[0];self.assertEqual('',plan['error']);self.assertEqual([143,1143],[r['suggested_port'] for r in plan['rows']])
+        request=dict(frontend=plan['frontend'],revision=self.engine.snapshot()[1],bindings=[dict(key=r['key'],address='127.0.0.1',port=r['suggested_port']) for r in plan['rows']])
+        checked,draft=preview(self.manager,request);self.assertTrue(checked['ok'],checked['output']);self.assertTrue(all(m['protocol']=='imap' and not m['sni_routing'] for m in clean(draft['raw'])[1]))

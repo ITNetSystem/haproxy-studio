@@ -69,6 +69,18 @@ def inspect(manager):
                 group=choose_group(farms,[],{b['host'] for b in row['servers']},addresses)
                 row['exchange_name']=group['name'] if group else ''
             entry['rows']=[{k:v for k,v in row.items() if k!='data'} for row in rows.values()]
+            # Proposals are explicit form choices, never applied during inspection.
+            all_binds=[b for section in bindings(decode(raw)) if section['name']!=front['name'] for b in section['binds']]
+            if manager.engine.extra and manager.engine.extra.is_dir():
+                all_binds += [b for path in sorted(manager.engine.extra.glob('*.cfg')) for section in bindings(decode(path.read_bytes())) for b in section['binds']]
+            occupied=lambda port:any(b['lo']<=port<=b['hi'] for b in all_binds)
+            used=set()
+            for row in sorted(entry['rows'],key=lambda row:not bool(row['address'])):
+                proposed=bind['lo']
+                while proposed in used or occupied(proposed):
+                    proposed+=1000
+                    if proposed>65535:raise ValueError('Нет свободного порта для предложения. Укажите входы вручную.')
+                row['suggested_port']=proposed;used.add(proposed)
         except (ValueError,TypeError,IndexError) as error:entry['error']=str(error)
         result.append(entry)
     return result

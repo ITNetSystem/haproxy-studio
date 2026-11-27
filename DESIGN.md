@@ -127,3 +127,7 @@ Buttons have 44px minimum height and weight 600; compact table actions are 36px.
 
 - Do not fabricate charts or healthy zero values.
 - Do not introduce promotional hero content.
+
+## Compact operator workspace
+
+The default compact density reduces list, panel and form spacing while keeping 40–44px controls, visible focus and 16px mobile inputs. The header density toggle persists in local browser storage and restores the comfortable layout. Desktop navigation stays visible within a scrollable sticky rail. Long operator collections use local search, explicit counts and 8/20/50/all paging; no data is removed. Routes use their existing global search, which expands matching infrastructure disclosures. Technical frontend entries and certificate composition are collapsed initially. Exchange summaries distinguish external ports, internal ports and SNI/STARTTLS.

@@ -37,6 +37,8 @@ def describe(raw,sections,models):
         if re.search(r'^\s*stats enable\s*$',body,re.M):section.update(display_name='Статистика HAProxy',purpose='Страница статистики и состояния HAProxy.')
         elif section['name'] in bridges.values():section.update(display_name='Локальный вход HTTPS',purpose='Расшифровывает TLS, полученный через локальный мост. Внешний порт указан на общем TLS-входе.')
         elif spec.get('mode')=='http':section['display_name']='Вход '+('HTTPS' if tls else 'HTTP')+(' · '+port if port else '')
+        elif not tls and re.search(r'^\s*(?:acl\s+\S+\s+ssl_fc_sni\b|use_backend\s+[^\n]*\bssl_fc_sni\b)',body,re.M):
+            section.update(display_name='Вход STARTTLS · '+port if all(b['lo'] in (143,587) for b in spec.get('binds',[])) else 'Вход TCP · '+port,purpose='Ошибка старых правил: ssl_fc_sni недоступен без TLS на bind. Совпавшие имена не выбирают сервер; соединения без другого правила идут в backend по умолчанию. Исправьте вход в разделе «Сервисы».',routing_warning=True)
         elif 'req.ssl_sni' in body or 'ssl_fc_sni' in body:section.update(display_name='Общий вход TLS'+(' · '+port if port else ''),purpose='Выбирает публикацию по имени домена в TLS (SNI).')
         else:section['display_name']='Вход TCP'+(' / TLS' if tls else '')+(' · '+port if port else '')
         for route in section['routes']:

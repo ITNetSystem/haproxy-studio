@@ -45,3 +45,15 @@ class RoutingTests(ServicesFixture):
     def test_legacy_route_server_names_use_pool_local_indexes(self):
         from haproxy_studio.routing import publications
         checked,draft=self.preview(self.data('exchange',fallback_status=503));self.assertTrue(checked['ok']);item=publications(clean(draft['raw'])[1],[],self.describe(draft['raw']))[0];self.assertEqual([dict(name='node1',address='192.0.2.15:443')],item['servers'])
+
+    def test_plain_starttls_sni_rules_are_not_presented_as_working_tls_routing(self):
+        from test_starttls_repair import StarttlsRepairTests
+        source=StarttlsRepairTests.source(None)
+        front=next(s for s in self.describe(source) if s['name']=='mail_smtp_587')
+        self.assertTrue(front['routing_warning']);self.assertIn('STARTTLS',front['display_name']);self.assertIn('ssl_fc_sni недоступен',front['purpose']);self.assertNotIn('Выбирает публикацию',front['purpose'])
+
+    def test_implicit_tls_sni_is_still_presented_as_tls_routing(self):
+        from test_starttls_repair import StarttlsRepairTests
+        source=StarttlsRepairTests.source(None).replace(b'bind 127.0.0.1:587',('bind 127.0.0.1:465 ssl crt '+str(self.cert)).encode())
+        front=next(s for s in self.describe(source) if s['name']=='mail_smtp_587')
+        self.assertFalse(front.get('routing_warning',False));self.assertIn('Общий вход TLS',front['display_name']);self.assertIn('465',front['display_name'])

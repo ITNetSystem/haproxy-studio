@@ -185,3 +185,5 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.24 adds read-only TLS/certificate details to all service cards, including grouped Exchange and legacy inventory. Domain coverage is derived from actual bind crt/crt-list references, with labels, expiry, key algorithms and uncertainty warnings; unrelated uploaded files are not assigned. Passthrough, STARTTLS and application encryption remain explicitly unverified on the backend. This is configuration/file inspection, not a public TLS handshake check.
+
+0.25 adds a persistent compact/comfortable density switch, searchable paged operator lists, collapsed infrastructure entries and certificate details, and explicit external-to-backend port labels in Exchange. The STARTTLS repair form can propose distinct ports on one HAProxy IP, skipping configured ports. Proposals only populate the form; validation, review and explicit apply remain required. Standard SMTP/587 and IMAP/143 cannot select independent backend pools using SNI.
