@@ -333,14 +333,19 @@ class Engine:
             warning = 'Runtime API недоступен. Проверьте путь к socket, права доступа и службу HAProxy.'
         allowed = ('Version', 'Uptime', 'CurrConns', 'CumConns', 'ConnRate', 'Maxconn', 'Nbthread')
         from .services import clean
-        from .monitoring import annotate,overview_servers
+        from .monitoring import annotate,overview_servers,service_summary
         from .routing import describe,publications
         base,models=clean(raw)
         from .service_types import annotate as annotate_types
         annotate_types(models,base,self.settings)
         parsed=describe(raw,sections(raw),models)
-        annotate(rows,parsed,models)
-        return dict(server_groups=overview_servers(rows,parsed,models,base,self.settings),info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
+        extra_sections=[]
+        for file in self.config_files()[1:]:extra_sections+=sections(file.read_bytes())
+        reference_sections=parsed+extra_sections
+        annotate(rows,reference_sections,models)
+        destinations=overview_servers(rows,reference_sections,models,base,self.settings)
+        summary=service_summary(destinations)
+        return dict(summary,server_groups=destinations,info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
 
     def history(self):
         backups = [json.loads(p.read_text()) for p in sorted((self.state / 'backups').glob('*/meta.json'), reverse=True)][:50]

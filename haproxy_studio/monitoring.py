@@ -42,9 +42,64 @@ def service_status(model,rows,routes):
     if all(state=='Проверки выключены' for state in states):return 'Проверки выключены'
     return 'Сервер недоступен'
 
+def backend_usage(sections):
+    """Only prove unused when all bound entry points use static backend names."""
+    configured={s['name'] for s in sections if s['type'] in ('backend','listen')}
+    used={s['name'] for s in sections if s['type']=='listen' and s.get('binds')}
+    dynamic=False
+    for section in sections:
+        if section['type'] not in ('frontend','listen') or not section.get('binds'):continue
+        for route in section.get('routes',[]):
+            target=route['backend']
+            if '%' in target or '\\' in target or any(q in target for q in ('\"',"'")):dynamic=True
+            else:used.add(target)
+    return {name:'active' if name in used else 'unknown' if dynamic else 'unused' for name in configured}
+
+
+def summarize_checks(entry):
+    import math
+    checks=entry['checks'];states={str(r.get('status') or '') for r in checks}
+    healthy=any(s in ('UP','OPEN') for s in states)
+    if len(states)==1:entry['status']=next(iter(states))
+    elif states<= {'UP','OPEN'}:entry['status']='UP'
+    elif healthy and any(s in ('','Нет данных') for s in states):entry['status']='Неполные данные'
+    elif healthy:entry['status']='Часть проверок выключена' if all(s in ('UP','OPEN','no check') for s in states) else 'Частично доступен'
+    elif all(s.startswith('DOWN') or s=='MAINT' for s in states):entry['status']='DOWN'
+    else:entry['status']='Разные состояния'
+    values=[]
+    for row in checks:
+        try:value=float(row.get('scur',''))
+        except (TypeError,ValueError):continue
+        if math.isfinite(value) and value>=0:values.append(value)
+    entry['scur']=sum(values) if values else ''
+    entry['partial_connections']=len(values)!=len(checks)
+    entry['check_status']=checks[0].get('check_status','') if len(checks)==1 else str(len(checks))+' проверок'
+    return entry
+
+
+def service_summary(destinations):
+    """One service row; inactive and unmatched runtime pools remain inspectable."""
+    buckets={}
+    for server in destinations:
+        usage=server.get('usage','unknown');category='active' if usage in ('active','unknown') else usage
+        key=(category,server['service_id'])
+        entry=buckets.setdefault(key,dict(name=server['name'],service_id=server['service_id'],servers=[],checks=[],usage=usage))
+        if usage=='unknown':entry['usage']='unknown'
+        address=server['address']
+        existing=next((s for s in entry['servers'] if address and s['address']==address),None)
+        if existing is None:entry['servers'].append(dict(server,checks=list(server['checks'])))
+        else:
+            existing['checks']+=server['checks'];summarize_checks(existing)
+        entry['checks']+=server['checks']
+    result=dict(service_groups=[],unused_groups=[],unmapped_groups=[])
+    for (category,_),entry in buckets.items():
+        summarize_checks(entry);entry['address']=', '.join(dict.fromkeys(s['address'] for s in entry['servers'] if s['address']))
+        entry['server_count']=len(entry['servers'])
+        result['service_groups' if category=='active' else 'unused_groups' if category=='unused' else 'unmapped_groups'].append(entry)
+    return result
+
 def overview_servers(rows,sections,models,base,settings):
     """One destination per service, preserving every path/server runtime row."""
-    import math
     from .exchange_groups import groups
     from .services import bindings
     farms=groups(models,base,settings);member_group={i:g for g in farms for i in g['members']}
@@ -67,6 +122,7 @@ def overview_servers(rows,sections,models,base,settings):
         owners.setdefault(backend_name(m),[]).append((owner,name,label))
         for r in m.get('routes',[]):
             if r['action']=='backend':owners.setdefault(backend_name(m,r),[]).append((owner,name,r['path']))
+    usage=backend_usage(sections)
     buckets={}
     observed={(r['pxname'],r['svname']) for r in rows}
     expanded=list(rows)
@@ -79,27 +135,11 @@ def overview_servers(rows,sections,models,base,settings):
         if row['svname'] in ('FRONTEND','BACKEND'):continue
         choices=owners.get(row['pxname'],[]);ids={v[0] for v in choices}
         owner=next(iter(ids)) if len(ids)==1 else 'backend:'+row['pxname']
-        name=choices[0][1] if len(ids)==1 else row.get('display_name',row['svname'])
-        address=row.get('server_address','');key=(owner,address or (row['pxname'],row['svname']))
-        entry=buckets.setdefault(key,dict(name=name,address=address,checks=[],scur='',status=''))
+        name=choices[0][1] if len(ids)==1 else row['pxname']
+        address=row.get('server_address','');state=usage.get(row['pxname'],'unmapped');key=(owner,address or (row['pxname'],row['svname']),state)
+        entry=buckets.setdefault(key,dict(name=name,address=address,checks=[],scur='',status='',service_id=owner,usage=state))
         labels=list(dict.fromkeys(v[2] for v in choices if v[2]))
         detail=dict(row);detail['path']=row.get('route_path') or ', '.join(labels) or 'Основной пул'
         entry['checks'].append(detail)
-    for entry in buckets.values():
-        checks=entry['checks'];states={str(r.get('status') or '') for r in checks}
-        healthy=any(s in ('UP','OPEN') for s in states)
-        if len(states)==1:entry['status']=next(iter(states))
-        elif states<= {'UP','OPEN'}:entry['status']='UP'
-        elif healthy and any(s in ('','Нет данных') for s in states):entry['status']='Неполные данные'
-        elif healthy:entry['status']='Часть проверок выключена' if all(s in ('UP','OPEN','no check') for s in states) else 'Частично доступен'
-        elif all(s.startswith('DOWN') or s=='MAINT' for s in states):entry['status']='DOWN'
-        else:entry['status']='Разные состояния'
-        values=[]
-        for row in checks:
-            try:value=float(row.get('scur',''))
-            except (TypeError,ValueError):continue
-            if math.isfinite(value) and value>=0:values.append(value)
-        entry['scur']=sum(values) if values else ''
-        entry['partial_connections']=len(values)!=len(checks)
-        entry['check_status']=checks[0].get('check_status','') if len(checks)==1 else str(len(checks))+' проверок'
+    for entry in buckets.values():summarize_checks(entry)
     return list(buckets.values())
