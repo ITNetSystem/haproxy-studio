@@ -101,3 +101,16 @@ class AdministrationTests(ServicesFixture):
         with self.assertRaises(Conflict):self.resources.delete_backend(dict(id=catalog['backends'][0]['id'],revision=catalog['revision']))
         self.settings['read_only']=True
         with self.assertRaises(ValueError):self.resources.manage_certificate(dict(action='rename',name='leaf.pem',label='Other'))
+
+    def test_unreferenced_manual_pool_can_be_deleted_without_route_changes(self):
+        source=BASE+b'backend unused_dag\n    mode tcp\n    server node_a 192.0.2.1:587 check\n    server node_b 192.0.2.2:587 check\n'
+        self.config.write_bytes(source);catalog=self.resources.backends();pool=next(b for b in catalog['backends'] if b['name']=='unused_dag');self.assertEqual([],pool['references']);self.assertEqual('',pool['blocked'])
+        checked,draft=self.deletion('unused_dag');self.assertTrue(checked['ok'],checked['output']);self.assertEqual(BASE,draft['raw']);self.assertEqual(source,self.config.read_bytes())
+
+    def test_disabled_import_keeps_its_pool_protected_even_without_routes(self):
+        from test_exchange_groups import ExchangeGroupTests
+        from haproxy_studio.importer import Importer
+        from haproxy_studio.services import clean
+        self.config.write_bytes(ExchangeGroupTests.source(self));request=dict(revision=self.engine.snapshot()[1]);scan=Importer(self.manager).scan(request);checked,draft=Importer(self.manager).preview(dict(request,fingerprint=scan['fingerprint'],selected=[c['id'] for c in scan['candidates']]));self.assertTrue(checked['ok']);self.config.write_bytes(draft['raw']);model=self.manager.catalog()['services'][0];pool_name=model['import_pool'];model['enabled']=False;checked,disabled=self.preview(model);self.assertTrue(checked['ok']);self.config.write_bytes(disabled['raw'])
+        pool=next(b for b in self.resources.backends()['backends'] if b['name']==pool_name);self.assertEqual([],pool['references']);self.assertIn('выключенные',pool['blocked'])
+        with self.assertRaises(ValueError):self.deletion(pool_name)

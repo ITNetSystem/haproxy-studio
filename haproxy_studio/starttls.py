@@ -3,6 +3,7 @@ import copy
 import difflib
 import hashlib
 import json
+import ipaddress
 import re
 from .core import Conflict,decode,mask
 from .services import clean,bindings,number
@@ -86,6 +87,23 @@ def preview(manager,value):
     if not isinstance(submitted,list) or len(submitted)!=len(plan['rows']) or any(not isinstance(v,dict) for v in submitted):raise ValueError('Укажите адрес и порт для каждого пула / DAG.')
     patches={row.get('key'):row for row in submitted}
     if len(patches)!=len(submitted) or set(patches)!={r['key'] for r in plan['rows']}:raise ValueError('Состав пулов изменился. Повторите проверку.')
+    from .services import overlaps,address as endpoint
+    selected={}
+    for row in plan['rows']:
+        bind_host=patches[row['key']].get('address','')
+        if not isinstance(bind_host,str) or not bind_host.strip():raise ValueError('Для каждого пула укажите IP на HAProxy либо * и отдельный порт.')
+        bind_host=bind_host.strip()
+        if bind_host!='*':
+            try:bind_host=str(ipaddress.ip_address(bind_host.strip('[]')))
+            except ValueError:raise ValueError('Укажите IP на HAProxy либо *, без домена, протокола и порта.')
+        port=number(patches[row['key']].get('port'),'Порт входа на HAProxy')
+        for other in plan['rows']:
+            if other['key'] not in selected:continue
+            host,used=selected[other['key']]
+            if port==used and overlaps(host,bind_host):
+                first=other.get('exchange_name') or ', '.join(other['pools']);second=row.get('exchange_name') or ', '.join(row['pools'])
+                raise ValueError('Один вход на HAProxy '+endpoint(bind_host,port)+' задан для разных назначений: '+first+' и '+second+'. Знак * занимает все IPv4-адреса HAProxy. Укажите разные порты на одном IP либо разные IP на HAProxy; внутренние адреса Exchange здесь не разделяют вход.')
+        selected[row['key']]=(bind_host,port)
     base,models=clean(raw);parsed=bindings(base);front=next(s for s in parsed if s['name']==plan['frontend']);lines=base.splitlines(True)
     end=next((s['start'] for s in parsed if s['start']>front['start']),len(lines));comments=''.join(line for line in lines[front['start']:end] if line.lstrip().startswith('#'))
     baseline=''.join(lines[:front['start']])+comments+''.join(lines[end:]);defaults=next((s for s in parsed if s['type']=='defaults'),None)
@@ -96,9 +114,7 @@ def preview(manager,value):
     source_pools={s['name']:s for s in parsed if s['type']=='backend'}
     addresses={m['id']:{b['host'] for b in (pool_servers(source_pools[m['import_pool']]) if m.get('import_pool') in source_pools else m['backends'])} for m in models}
     for row in plan['rows']:
-        patch=patches[row['key']];address=patch.get('address','')
-        if not isinstance(address,str) or not address.strip():raise ValueError('Для каждого пула укажите IP на HAProxy либо * и отдельный порт.')
-        port=number(patch.get('port'),'Внешний порт');target=row['pools'][0];section=next(s for s in parsed if s['type']=='backend' and s['name']==target)
+        address,port=selected[row['key']];target=row['pools'][0];section=next(s for s in parsed if s['type']=='backend' and s['name']==target)
         data=pool(manager,section,active(defaults) if defaults else [])
         timeout=next((seconds(p[2]) for _,p in active(front) if p[:2]==['timeout','client']),None)
         if timeout is None:

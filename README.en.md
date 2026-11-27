@@ -176,3 +176,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.22 adds a reviewed STARTTLS repair wizard under Services. It replaces supported legacy SNI-on-587/143 rules with dedicated managed TCP endpoints, retaining DAG nodes, independent timeouts and logging. Equal pools merge; every distinct destination needs explicit HAProxy bind address/port input. No network addresses are guessed or assigned. Grouping uses current pool addresses and rejects contradictory domain/IP associations. Compound deletion and request validation, container healthcheck and CI prerequisites were fixed. See the [repair guide](docs/starttls-repair.ru.md) and [audit scope/results](docs/audit-0.22.ru.md).
+
+
+0.22.1 adds reviewed backend deletion directly to Overview → Backends without routes, with current dependency checks and explicit blocking reasons. Refresh preserves expanded diagnostics and pauses during resource dialogs. STARTTLS conflict errors identify both destinations sharing the same HAProxy bind; SNI guidance distinguishes immediate TLS from standard SMTP/587 STARTTLS.

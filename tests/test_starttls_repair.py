@@ -72,3 +72,11 @@ backend farm_b
     def test_mixed_anonymous_condition_is_not_mistaken_for_pure_sni(self):
         self.config.write_bytes(self.source().replace(b'{ ssl_fc_sni mail.a.example.test }',b'{ ssl_fc_sni mail.a.example.test } or { src 192.0.2.123 }'))
         self.assertIn('другое условие',inspect(self.manager)[0]['error'])
+
+    def test_wildcard_conflict_names_destinations_before_render(self):
+        from unittest.mock import patch
+        self.config.write_bytes(self.source());request=self.request()
+        for row in request['bindings']:row.update(address='*',port=587)
+        with patch.object(self.manager,'render') as render:
+            with self.assertRaisesRegex(ValueError,r'\*:587.*dag_a.*farm_b'):preview(self.manager,request)
+            render.assert_not_called()
