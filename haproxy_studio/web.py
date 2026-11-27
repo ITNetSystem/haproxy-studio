@@ -274,7 +274,13 @@ class Application:
                     checked,draft=preview_exchange(app.services,value)
                     return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/services/preview':
-                    checked, draft = app.services.preview(value.get('service', {}), value.get('revision'), value.get('action', 'upsert'))
+                    service=value.get('service', {})
+                    from .services import clean as clean_services
+                    existing=next((m for m in clean_services(app.engine.snapshot()[0])[1] if m['id']==service.get('id')),None)
+                    if service.get('protocol')=='exchange' or existing and existing['protocol']=='exchange' or 'exchange_mail' in service:
+                        from .exchange_mail import preview as preview_mail
+                        checked,draft=preview_mail(app.services,service,value.get('revision'),value.get('action','upsert'))
+                    else:checked, draft = app.services.preview(service, value.get('revision'), value.get('action', 'upsert'))
                     return self.reply(200, app.store_draft(checked, draft, key))
                 if path == base + '/api/services/check':
                     return self.reply(200, app.services.connectivity(value.get('service', {})))

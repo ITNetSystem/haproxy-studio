@@ -224,6 +224,9 @@ class ServiceManager:
         from .rdweb import normalize as normalize_rdweb
         from .service_types import normalize as normalize_type
         from .naming import normalize_acl
+        if data.get('exchange_parent'):
+            if not isinstance(data['exchange_parent'],str) or not re.fullmatch(r'[a-f0-9]{16}',data['exchange_parent']):raise ValueError('Некорректная связь Exchange.')
+            model['exchange_parent']=data['exchange_parent']
         return normalize_acl(data,normalize_type(data,normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model))))))
 
     def certificate_path(self,name):
@@ -289,7 +292,10 @@ class ServiceManager:
                 if name.lower() in used:raise ValueError('Имя backend уже используется: '+name+'. Выберите другое имя в настройках сервиса.')
                 used.add(name.lower())
         insertions={};tls_add={};tail=[];claimed=[];warnings=[]
-        def add(index,model,kind,body):insertions.setdefault(index,[]).append((1 if kind=='route' else 0,block(model['id'],kind,body)))
+        def labelled(model,kind,body):
+            label=model['name'].replace('\n',' ').replace('\r',' ')
+            return ('# Сервис: '+label+' | '+kind+' | '+backend_name(model)+'\n' if model.get('acl_prefix') else '')+body
+        def add(index,model,kind,body):insertions.setdefault(index,[]).append((1 if kind=='route' else 0,block(model['id'],kind,labelled(model,kind,body))))
         def listener(model,port,tls,http_redirect=False):
             from .preserve import resolve_https
             if model.get('tcp_frontend') and not http_redirect:
@@ -436,11 +442,11 @@ class ServiceManager:
                 else:
                     if first['allowed_ips']:body+='    tcp-request connection reject unless { src '+first['allowed_ips']+' }\n'
                     body+='    default_backend '+backend_name(first)+'\n'
-            tail.append(block(first['id'],'listener_'+str(spec['port']),body))
+            tail.append(block(first['id'],'listener_'+str(spec['port']),labelled(first,'вход '+str(spec['port']),body)))
         for model in models:
             body='# studio-model '+packed(model)+'\n'
             if model['enabled']:body+=self.backend(model)
-            tail.append(block(model['id'],'model',body))
+            tail.append(block(model['id'],'model',labelled(model,'настройки и серверы',body)))
         out=[]
         for index,line in enumerate(lines):
             out.extend(value for _,value in sorted(insertions.get(index,[]),key=lambda pair:pair[0]))

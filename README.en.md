@@ -164,3 +164,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.19 generates readable ACL names such as `acl_exchange_pmir_owa_host`. Existing ACLs change only through the reviewed **Readable configuration names** action; shared imported pools remain intact. Uploaded PEM filenames follow their labels (`mail.example.ru.pem`), with numeric collision suffixes. Certificate rename can optionally create a readable PEM alias and update direct configuration/model references after review. The old PEM is retained for rollback; directory and crt-list references require separate migration. See the [Russian naming guide](docs/names.ru.md).
+
+
+0.20 groups Exchange HTTPS, IMAPS and SMTPS in one card. The Exchange wizard can publish both mail protocols in one reviewed transaction, retaining independent ports, SNI and TLS settings. Existing managed mail services join only an unambiguous matching Exchange domain group; raw unimported sections are unchanged. SMTP 25/587 remains separate. The configuration editor includes line numbers; generated blocks include readable service comments while retaining integrity IDs and hashes.
