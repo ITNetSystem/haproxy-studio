@@ -224,6 +224,10 @@ class Importer:
                         candidates.append(dict(id=identifier,name=model['name'],frontend=front['name'],backend=backend['name'] if backend else 'HTTP redirect',protocol=PRESETS[protocol][0],domains=domains,port=bind['lo'],servers=[str(s['host'])+':'+str(s['port']) for s in model['backends']],model=model,removed=removed))
                     except (ValueError,TypeError,IndexError) as error:warnings.append(dict(name=front['name']+' → '+r[1],reason=str(error)))
             except (ValueError,TypeError,IndexError) as error:warnings.append(dict(name=front['name'],reason=str(error)))
+        from .naming import allocate_acl
+        taken=set(re.findall(r'(?m)^\s*acl\s+(\S+)',base))|{m['acl_prefix'] for m in managed if m.get('acl_prefix')}
+        for candidate in candidates:
+            if not candidate['model'].get('acl_prefix'):candidate['model']['acl_prefix']=allocate_acl(candidate['model'],taken)
         from .service_types import classify
         for candidate in candidates:candidate['classification']=classify(candidate['model'],parsed,self.engine.settings)
         return base,managed,candidates,warnings

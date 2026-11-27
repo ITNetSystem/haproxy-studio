@@ -53,7 +53,7 @@ backend fallback
         self.assertEqual(1,len(models));self.assertEqual({'app.example.test','other.example.test'},set(models[0]['domains']));self.assertEqual('shared',models[0]['import_pool'])
         pool=raw[raw.index(b'\nbackend shared\n')+1:raw.index(b'\nbackend special\n')+1]
         self.assertIn(pool,draft['raw']);self.assertEqual(1,draft['raw'].count(b'backend shared\n'));self.assertIn(b'http-request deny if blocked',draft['raw']);self.assertIn(b'acl portal path_beg /owa',draft['raw']);self.assertEqual(raw,self.config.read_bytes());self.assertEqual(2,len(models[0]['import_acl']['slots']))
-        text=draft['raw'].decode();self.assertLess(text.index('use_backend shared if st_'),text.index('use_backend special'));self.assertGreater(text.rindex('use_backend shared if st_'),text.index('use_backend special'))
+        text=draft['raw'].decode();self.assertLess(text.index('use_backend shared if acl_'),text.index('use_backend special'));self.assertGreater(text.rindex('use_backend shared if acl_'),text.index('use_backend special'))
     def test_or_and_bounded_negation_and_repeated_acl_definitions(self):
         raw=self.source().replace(b'use_backend shared if org_a portal',b'use_backend shared if org_a !org_b portal or org_b portal').replace(b'    use_backend shared if org_b portal\n',b'')
         checked,draft=self.adopt(raw,['shared']);model=clean(draft['raw'])[1][0];self.assertEqual({'app.example.test','other.example.test'},set(model['domains']));self.assertEqual(2,len(model['import_acl']['slots'][0]['terms']))
@@ -72,7 +72,7 @@ backend fallback
         checked,again=self.preview(model);self.assertFalse(checked['changed']);self.assertEqual(draft['raw'],again['raw'])
         model['aliases']=[];checked,changed=self.preview(model);self.assertTrue(checked['ok']);generated=[m[4] for m in __import__('haproxy_studio.services',fromlist=['BLOCK']).BLOCK.finditer(changed['raw'].decode()) if m[2].startswith('aclroute')];self.assertFalse(any('other.example.test' in text for text in generated))
         self.config.write_bytes(draft['raw']);renamed,_=self.manager.preview_names(self.engine.snapshot()[1]);self.assertFalse(renamed['changed'])
-        model['enabled']=False;checked,disabled=self.preview(model);self.assertTrue(checked['ok']);self.assertIn(b'backend shared\n',disabled['raw']);self.assertNotIn(b'use_backend shared if st_',disabled['raw']);self.config.write_bytes(disabled['raw']);self.assertTrue(next(p for p in Resources(self.engine).backends()['backends'] if p['name']=='shared')['blocked'])
+        model['enabled']=False;checked,disabled=self.preview(model);self.assertTrue(checked['ok']);self.assertIn(b'backend shared\n',disabled['raw']);self.assertNotIn(b'use_backend shared if acl_',disabled['raw']);self.config.write_bytes(disabled['raw']);self.assertTrue(next(p for p in Resources(self.engine).backends()['backends'] if p['name']=='shared')['blocked'])
         self.config.write_bytes(draft['raw']);checked,deleted=self.preview(dict(id=model['id']),'delete');self.assertTrue(checked['ok']);self.assertIn(b'backend shared\n',deleted['raw']);self.assertIn(b'use_backend special if org_b blocked',deleted['raw'])
     def test_other_frontend_can_adopt_same_pool_without_copying_it(self):
         raw=self.source()+b'frontend second\n    bind 127.0.0.1:19443\n    mode http\n    acl site hdr(host),lower,field(1,:) -i app.example.test\n    use_backend shared if site\n'

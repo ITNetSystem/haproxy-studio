@@ -1,5 +1,5 @@
 """Presentation only: describe managed routes without changing HAProxy configuration."""
-from .naming import backend_name
+from .naming import backend_name,acl_base,imported_acl
 import re
 from .services import BLOCK,bindings,decode
 
@@ -57,9 +57,8 @@ def describe(raw,sections,models):
             else:
                 card['condition']='Остальные подключения' if not route['condition'] else 'Ручное условие — см. технические детали'
             if model and model.get('import_pool'):
-                part=re.search(r'_slot(\d+)_term(\d+)',route['condition'])
-                if part:
-                    term=model['import_acl']['slots'][int(part[1])]['terms'][int(part[2])]
+                term=next((term for i,slot in enumerate(model['import_acl']['slots']) for j,term in enumerate(slot['terms']) if re.search(r'(?<![\w.-])'+re.escape(imported_acl(model,i,j))+r'(?![\w.-])',route['condition'])),None)
+                if term is not None:
                     card['domains']=[d for d in term['domains'] if d in model['domains']]
                     template=model.get('import_domain_template') or model['import_acl']['slots'][0]['terms'][0]['domains'][0]
                     if template in term['domains']:
@@ -81,7 +80,7 @@ def describe(raw,sections,models):
         if section['type']!='frontend' or not section['name'].startswith('studio_fe_'):continue
         spec=parsed_names.get(section['name'],{});body=''.join(line for _,line in spec.get('lines',[]))
         for model in models:
-            if not re.search(r'\bacl st_'+re.escape(model['id'])+r'_(?:host|sni)\b',body):continue
+            if not re.search(r'\bacl '+re.escape(acl_base(model))+r'_(?:host|sni)\b',body):continue
             phase='redirect' if model.get('redirect') and any(b['lo']==model['http_port'] and not b['tls'] for b in spec.get('binds',[])) else 'route'
             exposures.setdefault((section['name'],model['id'],phase),section['line']+1)
     for (section_name,identifier,phase),line in exposures.items():

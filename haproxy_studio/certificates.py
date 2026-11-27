@@ -7,7 +7,6 @@ import time
 import os
 from pathlib import Path
 import re
-import secrets
 import tempfile
 
 def upload(engine,data):
@@ -59,16 +58,35 @@ def upload(engine,data):
         warnings=check_chain(engine,folder,blocks)
         combined=('\n'.join(blocks)+'\n').encode()+decrypted.stdout
         directory=Path(engine.settings['certificate_dir']);directory.mkdir(parents=True,exist_ok=True)
-        for previous in directory.glob('*.pem'):
-            if previous.name.startswith('studio-') and not previous.is_symlink() and previous.stat().st_mode&0o777==0o600 and previous.read_bytes()==combined:
-                return dict(ok=True,name=previous.name,label=previous.name,warnings=warnings,message='Такой PEM с ключом и цепочкой уже сохранён: '+previous.name+'. Дубликат не создан.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
-        name='studio-'+secrets.token_hex(12)+'.pem';destination=directory/name
         with engine.lock:
+            labels=engine.state/'certificate-labels.json'
+            values=json.loads(labels.read_text()) if labels.exists() else {}
+            for previous in directory.glob('*.pem'):
+                if previous.is_file() and not previous.is_symlink() and previous.stat().st_mode&0o777==0o600 and previous.read_bytes()==combined:
+                    return dict(ok=True,name=previous.name,label=values.get(previous.name,previous.name),warnings=warnings,message='Такой PEM уже сохранён: '+previous.name+'. Для изменения имени файла используйте «Переименовать» в сертификатах.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
+            name=available_name(directory,label);destination=directory/name
             fd=os.open(destination,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
             with os.fdopen(fd,'wb') as stream:stream.write(combined);stream.flush();os.fsync(stream.fileno())
-            labels=engine.state/'certificate-labels.json'
-            try:values=json.loads(labels.read_text()) if labels.exists() else {};values[name]=label.strip();tmp=labels.with_suffix('.tmp');tmp.write_text(json.dumps(values));tmp.replace(labels)
-            except OSError:
+            try:
+                values[name]=label.strip();tmp=labels.with_suffix('.tmp');tmp.write_text(json.dumps(values));tmp.chmod(0o600);tmp.replace(labels)
+            except (OSError,ValueError):
                 destination.unlink(missing_ok=True);raise
         engine.audit('certificate-upload',name=name)
-        return dict(ok=True,name=name,label=label.strip(),warnings=warnings,message='Сертификат и ключ проверены и сохранены. Сертификат выбран для сервиса.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
+        return dict(ok=True,name=name,label=label.strip(),warnings=warnings,message='Сертификат и ключ проверены. Файл: '+name+'. Сертификат выбран для сервиса.'+(' '+' '.join(warnings) if warnings else ''),certificates=engine.certificates()['certificates'])
+
+
+def certificate_stem(label):
+    from .naming import _RU
+    import unicodedata
+    value=re.sub(r'\.(?:pem|crt|cer|pfx|p12)$','',label.strip(),flags=re.I)
+    value=''.join(_RU.get(c,c) for c in value.lower())
+    value=unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode()
+    value=re.sub(r'[^a-z0-9_.-]+','_',value);value=re.sub(r'\.{2,}','.',value).strip('._-')
+    return (value or 'certificate')[:100].rstrip('._-')
+
+
+def available_name(directory,label,exclude=None):
+    root=certificate_stem(label);name=root+'.pem';n=2
+    while name!=exclude and ((directory/name).exists() or (directory/name).is_symlink()):
+        name=root+'-'+str(n)+'.pem';n+=1
+    return name

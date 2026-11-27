@@ -114,4 +114,53 @@ def migrate(manager,base,models):
         for file in extra.glob('*.cfg'):
             text=file.read_bytes().decode('utf-8','surrogateescape')
             if references(text,mapping)!=text:raise ValueError('На переименовываемый backend ссылается дополнительный файл '+file.name+'. Сначала перенесите или измените эти ссылки вручную.')
+    # Renaming managed ACLs cannot silently invalidate hand-written conditions.
+    from .services import BLOCK,decode
+    original=decode(manager.engine.snapshot()[0])
+    renaming_ids={m['id'] for m in models if not m.get('acl_prefix')}
+    old_acls={name for b in BLOCK.finditer(original) if b[1] in renaming_ids for name in re.findall(r'(?m)^\s*acl\s+(\S+)',b[4])}
+    for name in old_acls:
+        if re.search(r'(?<![\w.-])'+re.escape(name)+r'(?![\w.-])',manual):raise ValueError('На управляемый ACL '+name+' ссылается ручное правило. Сначала согласуйте его переименование.')
+    taken_acl=set(re.findall(r'(?m)^\s*acl\s+(\S+)',manual))|{m['acl_prefix'] for m in converted if m.get('acl_prefix')}
+    for index,(before,updated) in enumerate(zip(models,converted)):
+        if not updated.get('acl_prefix'):
+            updated=dict(updated,acl_prefix=allocate_acl(updated,taken_acl));converted[index]=updated
+            mapping[acl_base(before)]=updated['acl_prefix']
     return references(base,mapping),converted,mapping
+
+
+def acl_base(model):
+    return model.get('acl_prefix') or 'st_'+model['id']
+
+
+def normalize_acl(data,model):
+    value=data.get('acl_prefix')
+    if value:
+        if not isinstance(value,str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,39}',value):raise ValueError('Префикс ACL: до 40 латинских букв, цифр и _, начиная с буквы.')
+        model['acl_prefix']=value
+    return model
+
+
+def allocate_acl(model,taken):
+    root=('acl_'+slug(backend_name(model).removeprefix('be_') if model.get('import_pool') or model.get('backend_name') else model['name']))[:40]
+    candidate=root;n=2
+    while any(v.lower()==candidate.lower() or v.lower().startswith(candidate.lower()+'_') for v in taken):
+        suffix='_'+str(n);candidate=root[:40-len(suffix)]+suffix;n+=1
+    taken.add(candidate);return candidate
+
+
+def route_acl(model,row):
+    from .enterprise import route_key
+    if not model.get('acl_prefix'):return acl_base(model)+'_r'+route_key(model,row)
+    # Prefix/path modes of a route keep their semantics; only its ACL label changes.
+    part=slug(row['path'])[:28]
+    peers=[r for r in model.get('routes',[]) if slug(r['path'])[:28]==part]
+    suffix='_rule_'+str(next(i for i,r in enumerate(peers) if r['path']==row['path'])+1) if len(peers)>1 else ''
+    return acl_base(model)+'_path_'+part+suffix
+
+
+def imported_acl(model,slot,term=None,path_name=None):
+    if not model.get('acl_prefix'):
+        return acl_base(model)+'_slot'+str(slot)+('_path'+str(path_name) if term is None else '_term'+str(term))
+    root=acl_base(model)+('' if slot==0 else '_rule_'+str(slot+1))
+    return root+('_path_'+str(path_name+1) if term is None else '_host'+('' if term==0 else '_'+str(term+1)))

@@ -212,95 +212,100 @@ class Engine:
             previous, revision = self.snapshot()
             if revision != draft['revision']:
                 raise Conflict('Конфигурация изменилась после проверки. Повторите проверку.')
-            files = draft.get('files', {})
-            from .selfpublish import protect_publication
-            protect_publication(self,previous,draft['raw'],files)
-            changes = self.checked_files(files)
-            originals = {file: file.read_bytes() for file in changes}
-            checked = self.validate(draft['raw'], files) if files else self.validate(draft['raw'])
-            if not checked['ok']:
-                raise ValueError(checked['output'])
-            cert_change=draft.get('certificate_change')
-            if cert_change and (Path(cert_change['target']).is_symlink() or Path(cert_change['target']).read_bytes()!=cert_change['previous']):raise Conflict('Сертификат изменён после проверки.')
-            if not cert_change and not draft.get('studio_origin') and previous == draft['raw'] and all(originals[p] == raw for p,raw in changes.items()):
-                return dict(ok=True, message='Изменений нет. Перезагрузка не нужна.')
-            backup = time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(4)
-            folder = self.state / 'backups' / backup
-            folder.mkdir(mode=0o700)
-            shutil.copy2(self.config, folder / 'haproxy.cfg')
-            if self.extra and self.extra.is_dir():
-                shutil.copytree(self.extra, folder / 'conf.d')
-            (folder / 'meta.json').write_text(json.dumps(dict(id=backup, time=time.time(), reason=draft['reason'])))
-            if self.snapshot()[1] != revision:
-                raise Conflict('Обнаружено внешнее изменение. Повторите проверку.')
-            if cert_change:(folder/'certificate.pem').write_bytes(cert_change['previous'])
-            if draft.get('metadata_only'):
-                from .service_types import type_only_change
-                if files or cert_change or draft.get('studio_origin') or not type_only_change(previous,draft['raw']):
-                    raise ValueError('Уточнение типа содержит изменения маршрутизации. Повторите проверку.')
-                self.atomic_write(draft['raw'])
-                self.audit('service-type',backup=backup)
-                return dict(ok=True,backup=backup,metadata_only=True,message='Тип сервиса обновлён. Маршрутизация не менялась; перезагрузка HAProxy не потребовалась.')
-            previous_worker = None
-            try:
-                found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
-                previous_worker = found[1] if found else None
-            except (OSError, ValueError):
-                pass
-            origin_change=draft.get('studio_origin')
-            if origin_change and Path(origin_change['path']).read_bytes()!=origin_change['previous']:raise Conflict('Настройки Studio изменены после проверки.')
-            if origin_change:(folder/'studio-settings.json').write_bytes(origin_change['previous'])
-            if origin_change and not cert_change and previous==draft['raw'] and all(originals[p]==raw for p,raw in changes.items()):
-                from .selfpublish import install
-                install(self,origin_change)
-                self.audit('studio-origin',backup=backup)
-                return dict(ok=True,message='Публичный адрес Studio обновлён. Конфигурация HAProxy не менялась; reload не требовался.',backup=backup,public_url=self.settings['public_url'])
-            recovered = False
-            try:
-                self.atomic_write(draft['raw'])
-                for file, raw in changes.items():
-                    if file != self.config:
-                        self.atomic_write(raw, file)
-                if cert_change:
-                    self.atomic_write(cert_change['replacement'],Path(cert_change['target']))
-                    if not self.validate(draft['raw'])['ok']:raise ValueError('Новая конфигурация сертификата не прошла проверку.')
-                applied = self.command(self.settings['reload_command'], timeout=30).returncode == 0
-                applied = applied and self.command(self.settings['health_command']).returncode == 0
-                if applied and previous_worker and (draft.get('reason', '').startswith('service:') or draft.get('reason') in ('backend-delete','pool-edit')):
-                    changed = False
-                    for attempt in range(20):
-                        try:
-                            found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
-                            changed = bool(found and found[1] != previous_worker)
-                        except (OSError, ValueError):
-                            pass
-                        if changed: break
-                        time.sleep(.15)
-                    applied = changed
-                if applied and cert_change:
-                    from .certificate_probe import verify
-                    cert_change['verified_listeners']=verify(self,cert_change)
-                if applied and origin_change:
+            from .certificate_names import install as install_certificate_alias
+            with install_certificate_alias(self,draft.get('certificate_alias')):
+                files = draft.get('files', {})
+                from .selfpublish import protect_publication
+                protect_publication(self,previous,draft['raw'],files)
+                changes = self.checked_files(files)
+                originals = {file: file.read_bytes() for file in changes}
+                checked = self.validate(draft['raw'], files) if files else self.validate(draft['raw'])
+                if not checked['ok']:
+                    raise ValueError(checked['output'])
+                cert_change=draft.get('certificate_change')
+                if cert_change and (Path(cert_change['target']).is_symlink() or Path(cert_change['target']).read_bytes()!=cert_change['previous']):raise Conflict('Сертификат изменён после проверки.')
+                if not cert_change and not draft.get('certificate_alias') and not draft.get('studio_origin') and previous == draft['raw'] and all(originals[p] == raw for p,raw in changes.items()):
+                    return dict(ok=True, message='Изменений нет. Перезагрузка не нужна.')
+                if draft.get('certificate_alias') and previous==draft['raw'] and all(originals[p]==raw for p,raw in changes.items()):
+                    self.audit('certificate-name',name=draft['certificate_alias']['target'])
+                    return dict(ok=True,message='Понятное имя PEM сохранено. Ссылок в конфиге не было; reload не требовался. Старый PEM сохранён.')
+                backup = time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(4)
+                folder = self.state / 'backups' / backup
+                folder.mkdir(mode=0o700)
+                shutil.copy2(self.config, folder / 'haproxy.cfg')
+                if self.extra and self.extra.is_dir():
+                    shutil.copytree(self.extra, folder / 'conf.d')
+                (folder / 'meta.json').write_text(json.dumps(dict(id=backup, time=time.time(), reason=draft['reason'])))
+                if self.snapshot()[1] != revision:
+                    raise Conflict('Обнаружено внешнее изменение. Повторите проверку.')
+                if cert_change:(folder/'certificate.pem').write_bytes(cert_change['previous'])
+                if draft.get('metadata_only'):
+                    from .service_types import type_only_change
+                    if files or cert_change or draft.get('studio_origin') or not type_only_change(previous,draft['raw']):
+                        raise ValueError('Уточнение типа содержит изменения маршрутизации. Повторите проверку.')
+                    self.atomic_write(draft['raw'])
+                    self.audit('service-type',backup=backup)
+                    return dict(ok=True,backup=backup,metadata_only=True,message='Тип сервиса обновлён. Маршрутизация не менялась; перезагрузка HAProxy не потребовалась.')
+                previous_worker = None
+                try:
+                    found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
+                    previous_worker = found[1] if found else None
+                except (OSError, ValueError):
+                    pass
+                origin_change=draft.get('studio_origin')
+                if origin_change and Path(origin_change['path']).read_bytes()!=origin_change['previous']:raise Conflict('Настройки Studio изменены после проверки.')
+                if origin_change:(folder/'studio-settings.json').write_bytes(origin_change['previous'])
+                if origin_change and not cert_change and previous==draft['raw'] and all(originals[p]==raw for p,raw in changes.items()):
                     from .selfpublish import install
                     install(self,origin_change)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                applied = False
-            if not applied:
-                if cert_change:self.atomic_write(cert_change['previous'],Path(cert_change['target']))
-                self.atomic_write(previous)
-                for file, raw in originals.items():
-                    if file != self.config:
-                        self.atomic_write(raw, file)
+                    self.audit('studio-origin',backup=backup)
+                    return dict(ok=True,message='Публичный адрес Studio обновлён. Конфигурация HAProxy не менялась; reload не требовался.',backup=backup,public_url=self.settings['public_url'])
+                recovered = False
                 try:
-                    recovered = self.command(self.settings['reload_command'], timeout=30).returncode == 0 and self.command(self.settings['health_command']).returncode == 0
-                except (OSError, subprocess.SubprocessError):
-                    pass
-                self.audit('apply-failed', backup=backup, recovered=recovered)
-                raise ValueError('Новый файл отклонён. Старый файл восстановлен. ' + ('Служба работает.' if recovered else 'Проверьте службу вручную: восстановительная перезагрузка не подтверждена.'))
-            self.audit('apply', backup=backup,certificate_verified_listeners=cert_change.get('verified_listeners',0) if cert_change else None)
-            message='Изменения применены. Выполнена плавная перезагрузка HAProxy.'
-            if cert_change:message+=(' Fingerprint проверен на локальных TLS-входах: '+str(cert_change['verified_listeners'])+'.' if cert_change.get('verified_listeners') else ' Прямые TLS-входы для автоматической проверки не найдены; проверьте публичный SNI вручную.')
-            return dict(ok=True, message=message, backup=backup,public_url=self.settings['public_url'] if origin_change else None)
+                    self.atomic_write(draft['raw'])
+                    for file, raw in changes.items():
+                        if file != self.config:
+                            self.atomic_write(raw, file)
+                    if cert_change:
+                        self.atomic_write(cert_change['replacement'],Path(cert_change['target']))
+                        if not self.validate(draft['raw'])['ok']:raise ValueError('Новая конфигурация сертификата не прошла проверку.')
+                    applied = self.command(self.settings['reload_command'], timeout=30).returncode == 0
+                    applied = applied and self.command(self.settings['health_command']).returncode == 0
+                    if applied and previous_worker and (draft.get('reason', '').startswith('service:') or draft.get('reason') in ('backend-delete','pool-edit')):
+                        changed = False
+                        for attempt in range(20):
+                            try:
+                                found = re.search(r'^Pid: (\d+)$', self.runtime('show info'), re.M)
+                                changed = bool(found and found[1] != previous_worker)
+                            except (OSError, ValueError):
+                                pass
+                            if changed: break
+                            time.sleep(.15)
+                        applied = changed
+                    if applied and cert_change:
+                        from .certificate_probe import verify
+                        cert_change['verified_listeners']=verify(self,cert_change)
+                    if applied and origin_change:
+                        from .selfpublish import install
+                        install(self,origin_change)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    applied = False
+                if not applied:
+                    if cert_change:self.atomic_write(cert_change['previous'],Path(cert_change['target']))
+                    self.atomic_write(previous)
+                    for file, raw in originals.items():
+                        if file != self.config:
+                            self.atomic_write(raw, file)
+                    try:
+                        recovered = self.command(self.settings['reload_command'], timeout=30).returncode == 0 and self.command(self.settings['health_command']).returncode == 0
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                    self.audit('apply-failed', backup=backup, recovered=recovered)
+                    raise ValueError('Новый файл отклонён. Старый файл восстановлен. ' + ('Служба работает.' if recovered else 'Проверьте службу вручную: восстановительная перезагрузка не подтверждена.'))
+                self.audit('apply', backup=backup,certificate_verified_listeners=cert_change.get('verified_listeners',0) if cert_change else None)
+                message='Изменения применены. Выполнена плавная перезагрузка HAProxy.'
+                if cert_change:message+=(' Fingerprint проверен на локальных TLS-входах: '+str(cert_change['verified_listeners'])+'.' if cert_change.get('verified_listeners') else ' Прямые TLS-входы для автоматической проверки не найдены; проверьте публичный SNI вручную.')
+                return dict(ok=True, message=message, backup=backup,public_url=self.settings['public_url'] if origin_change else None)
 
     def runtime(self, command):
         with socket.socket(socket.AF_UNIX) as client:

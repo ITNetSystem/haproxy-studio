@@ -24,7 +24,8 @@ def path(model):
 
 def access_rules(model,condition,redirect=False):
     if model['protocol']!='rdwebproxy' or model.get('rdweb_access','both')=='both':return ''
-    ident='st_'+model['id']+'_portal';mode=model['rdweb_access']
+    from .naming import acl_base
+    ident=acl_base(model)+'_portal';mode=model['rdweb_access']
     # Filter decoded, case-insensitive paths. Ambiguous encodings and traversal
     # are rejected rather than interpreted differently by HAProxy and IIS.
     rules='    acl '+ident+'_unsafe path,url_dec -m sub % .. /./ //\n'

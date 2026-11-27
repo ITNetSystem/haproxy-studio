@@ -1,5 +1,5 @@
 """Form-based multi-domain, Exchange and SNI routing. No organization data."""
-from .naming import backend_name
+from .naming import backend_name,acl_base,route_acl
 import copy
 import hashlib
 import ipaddress
@@ -137,7 +137,7 @@ def location_redirect(target,condition):
             +'    http-request redirect location '+target+' code 302 if '+condition+'\n')
 
 def http_route(m,redirect=False):
-    ident='st_'+m['id'];conditions=[ident+'_host','{ dst_port '+str(m['http_port'] if redirect else m.get('route_port',m['port']))+' }']
+    ident=acl_base(m);conditions=[ident+'_host','{ dst_port '+str(m['http_port'] if redirect else m.get('route_port',m['port']))+' }']
     fetch='hdr(host)' if (redirect or m['tls_mode']=='plain') and m.get('http_host_match')=='raw' else 'hdr(host),lower,field(1,:)'
     body='    acl '+ident+'_host '+fetch+' -i '+' '.join(model_domains(m))+'\n'
     host_condition=' '.join(conditions)
@@ -164,17 +164,17 @@ def http_route(m,redirect=False):
     if m.get('root_redirect') and not m.get('redirect_root'):body+=location_redirect(m['root_redirect'],host_condition+' { path / }'+(' { method GET HEAD }' if m['protocol'] in ('rdwebproxy','studio') else ''))
     routes=sorted(enumerate(m.get('routes',[])),key=lambda pair:-len(pair[1]['path']))
     for index,row in routes:
-        acl=ident+'_r'+route_key(m,row);body+=('    acl '+acl+' path_beg '+('-i ' if m.get('path_ignore_case') else '')+row['path']+'\n' if row.get('match')=='prefix' else path_acl(acl,row['path'],m.get('path_ignore_case')))
+        acl=route_acl(m,row);body+=('    acl '+acl+' path_beg '+('-i ' if m.get('path_ignore_case') else '')+row['path']+'\n' if row.get('match')=='prefix' else path_acl(acl,row['path'],m.get('path_ignore_case')))
         if row['action']=='deny':body+='    http-request deny deny_status 403 if '+condition+' '+acl+'\n'
-    if m.get('fallback_status') and routes:body+='    http-request deny deny_status '+str(m['fallback_status'])+' if '+condition+' '+' '.join('!'+ident+'_r'+route_key(m,row) for _,row in routes)+'\n'
+    if m.get('fallback_status') and routes:body+='    http-request deny deny_status '+str(m['fallback_status'])+' if '+condition+' '+' '.join('!'+route_acl(m,row) for _,row in routes)+'\n'
     body+='    http-request allow if '+condition+'\n'
     for index,row in routes:
-        if row['action']=='backend':body+='    use_backend '+backend_name(m,row)+' if '+condition+' '+ident+'_r'+route_key(m,row)+'\n'
+        if row['action']=='backend':body+='    use_backend '+backend_name(m,row)+' if '+condition+' '+route_acl(m,row)+'\n'
     return body if m.get('fallback_status') and routes else body+'    use_backend '+backend_name(m)+' if '+condition+'\n'
 
 def tcp_route(m):
     fetch='ssl_fc_sni' if m['tls_mode']=='terminate' else 'req.ssl_sni'
-    acl='st_'+m['id']+'_sni'
+    acl=acl_base(m)+'_sni'
     result='    acl '+acl+' '+fetch+' -i '+' '.join(m['domains'])+'\n'
     if m['allowed_ips']:result+='    tcp-request content reject if '+acl+' !{ src '+m['allowed_ips']+' }\n'
     return result+'    use_backend '+backend_name(m)+' if '+acl+'\n'

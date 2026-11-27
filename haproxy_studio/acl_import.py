@@ -251,7 +251,8 @@ def attach(manager,base,parsed,model,add,models=()):
         body=''
         replacements={}
         for n,(name,values) in enumerate(model.get('import_paths',{}).items()):
-            spec=path_specs[name];owned='st_'+model['id']+'_slot'+str(i)+'_path'+str(n)
+            from .naming import imported_acl
+            spec=path_specs[name];owned=imported_acl(model,i,path_name=n)
             if owned in available:raise ValueError('Имя ACL пути уже определено вручную: '+owned)
             replacements[name]=owned
             body+='    acl '+owned+' '+spec['match']+(' -i ' if spec['ignore_case'] else ' ')+' '.join(values)+'\n'
@@ -260,7 +261,8 @@ def attach(manager,base,parsed,model,add,models=()):
             if template in term['domains']:domains|=extra
             if not domains:continue
             if any(t.lstrip('!') not in available for t in term['tests']):raise ValueError('Исходный ACL, используемый импортированной публикацией, удалён.')
-            acl='st_'+model['id']+'_slot'+str(i)+'_term'+str(j)
+            from .naming import imported_acl
+            acl=imported_acl(model,i,j)
             if acl in available:raise ValueError('Имя управляемого ACL уже определено вручную: '+acl)
             body+='    acl '+acl+' '+model['import_acl']['fetch']+(' -i ' if term.get('ignore_case',True) else ' ')+' '.join(sorted(domains))+'\n'
             tests=[('!' if t.startswith('!') else '')+replacements.get(t.lstrip('!'),t.lstrip('!')) for t in term['tests']]

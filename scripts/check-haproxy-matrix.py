@@ -24,11 +24,11 @@ def generate(root):
     count=0
     def save(name,values,baseline=BASE):
         nonlocal count
-        models=[manager.normalize(v,format(i+1,'016x')) for i,v in enumerate(values)]
+        models=[manager.normalize(dict(v,acl_prefix=v.get('acl_prefix','acl_compat')+'_'+str(i+1)),format(i+1,'016x')) for i,v in enumerate(values)]
         raw,_=manager.render(baseline,models,probe=False)
         (cases/(name+'.cfg')).write_text(decode(raw).replace(str(root),'/studio-check'));count+=1
     def data(protocol,**changes):
-        value=dict(name='Compatibility '+protocol,protocol=protocol,domain='app.example.test',certificate='cert.pem',backends=[dict(host='192.0.2.10',port=PRESETS[protocol][2])]);value.update(changes);return value
+        value=dict(acl_prefix='acl_compat_'+protocol,name='Compatibility '+protocol,protocol=protocol,domain='app.example.test',certificate='cert.pem',backends=[dict(host='192.0.2.10',port=PRESETS[protocol][2])]);value.update(changes);return value
     for protocol in PRESETS:save(protocol,[data(protocol)])
     save('rds-token',[data('rds',rds_mode='token')])
     save('rdweb-classic-only',[data('rdwebproxy',rdweb_access='standard')])

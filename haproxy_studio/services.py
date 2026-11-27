@@ -223,7 +223,8 @@ class ServiceManager:
         from .naming import normalize as normalize_names
         from .rdweb import normalize as normalize_rdweb
         from .service_types import normalize as normalize_type
-        return normalize_type(data,normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model)))))
+        from .naming import normalize_acl
+        return normalize_acl(data,normalize_type(data,normalize_names(data,preserve(self,data,normalize_rdweb(data,normalize(self,data,model))))))
 
     def certificate_path(self,name):
         if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.pem',name):raise ValueError('Выберите сертификат из списка или загрузите PEM/CRT и ключ.')
@@ -276,6 +277,8 @@ class ServiceManager:
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)
+        prefixes=[m['acl_prefix'].lower() for m in models if m.get('acl_prefix')]
+        if len(prefixes)!=len(set(prefixes)):raise ValueError('Префиксы ACL сервисов должны различаться.')
         extra=''
         if self.engine.extra and self.engine.extra.is_dir():extra='\n'.join(decode(p.read_bytes()) for p in sorted(self.engine.extra.glob('*.cfg')))
         other=bindings(extra)
@@ -425,8 +428,9 @@ class ServiceManager:
                     fallback=next((item for item in spec['models'] if item.get('sni_default')),None)
                     if fallback and fallback['allowed_ips']:
                         fetch='ssl_fc_sni' if spec['tls'] else 'req.ssl_sni'
-                        body+='    acl st_known_sni '+fetch+' -i '+' '.join(d for item in spec['models'] for d in item['domains'])+'\n'
-                        body+='    tcp-request content reject if !st_known_sni !{ src '+fallback['allowed_ips']+' }\n'
+                        known='acl_known_sni' if any(item.get('acl_prefix') for item in spec['models']) else 'st_known_sni'
+                        body+='    acl '+known+' '+fetch+' -i '+' '.join(d for item in spec['models'] for d in item['domains'])+'\n'
+                        body+='    tcp-request content reject if !'+known+' !{ src '+fallback['allowed_ips']+' }\n'
                     if not spec['tls']:body+='    tcp-request content accept if { req.ssl_hello_type 1 }\n'
                     if fallback:body+='    default_backend '+backend_name(fallback)+'\n'
                 else:
@@ -510,11 +514,19 @@ class ServiceManager:
         else:
             if action!='upsert':raise ValueError('Неизвестное действие.')
             data=dict(data)
+            if existing and existing.get('acl_prefix'):
+                data.setdefault('acl_prefix',existing['acl_prefix'])
+                if data['acl_prefix']!=existing['acl_prefix']:raise ValueError('Переименование ACL выполняется через «Понятные имена в конфиге».')
             import_changes=data.pop('import_changes',None)
             affected=[]
             if import_changes and not (existing and existing.get('import_pool')):raise ValueError('Настройки общего пула доступны только импортированной публикации.')
             if existing and 'rdweb_client' not in existing and data.get('rdweb_client')==('standard' if data.get('protocol')=='rdweb' else 'none'):data.pop('rdweb_client')
-            if not existing:data.setdefault('naming','readable')
+            if not existing:
+                data.setdefault('naming','readable')
+                if not data.get('acl_prefix'):
+                    from .naming import allocate_acl
+                    taken={p for text in [base]+[decode(f.read_bytes()) for f in self.engine.config_files()[1:]] for p in re.findall(r'(?m)^\s*acl\s+(\S+)',text)}|{m['acl_prefix'] for m in models if m.get('acl_prefix')}
+                    data['acl_prefix']=allocate_acl(data,taken)
             if existing and existing.get('import_pool'):
                 allowed={'import_paths','service_type_override','import_domain_template','name','domain','aliases','domains','sni_domains','enabled','id','update_public_url'}
                 for key,value in data.items():

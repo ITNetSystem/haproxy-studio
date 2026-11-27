@@ -238,6 +238,10 @@ class Application:
                     user = app.accounts.manage(session['user']['id'], value)
                     app.engine.audit('user-' + value.get('action', 'create'), username=user['username'])
                     return self.reply(200, dict(ok=True, users=app.accounts.list()))
+                if path == base + '/api/certificates/preview-rename':
+                    from .certificate_names import preview as preview_certificate_name
+                    checked,draft=preview_certificate_name(app.engine,value)
+                    return self.reply(200,app.store_draft(checked,draft,key))
                 if path == base + '/api/certificates/preview-replace':
                     checked,draft=app.resources.replace_certificate(value)
                     return self.reply(200,app.store_draft(checked,draft,key))
