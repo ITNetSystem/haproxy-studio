@@ -179,3 +179,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.22.1 adds reviewed backend deletion directly to Overview → Backends without routes, with current dependency checks and explicit blocking reasons. Refresh preserves expanded diagnostics and pauses during resource dialogs. STARTTLS conflict errors identify both destinations sharing the same HAProxy bind; SNI guidance distinguishes immediate TLS from standard SMTP/587 STARTTLS.
+
+
+0.23 adds direct certificate upload in Certificates, including an empty certificate list. Replacement supports either a saved certificate or a new PEM/CRT+KEY/PFX/P12 upload. Upload alone leaves active publications unchanged; replacement requires the existing reviewed apply workflow. A canceled replacement retains the uploaded file for later use.
