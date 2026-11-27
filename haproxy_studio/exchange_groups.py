@@ -73,7 +73,7 @@ def preview(manager,value):
     # Reject contradictory edits to one shared pool before preparing any change.
     edits={}
     for m in patches.values():
-        old=next(x for x in models if x['id']==m['id']);pool=old['import_pool'];change=m.get('import_changes')
+        old=next(x for x in models if x['id']==m['id']);pool=old.get('import_pool',old['id']);change=m.get('import_changes')
         if change:
             signature=json.dumps(change,sort_keys=True,ensure_ascii=True)
             if pool in edits and edits[pool]!=signature:raise ValueError('Разные настройки одного общего backend '+pool+'. Задайте одинаковые параметры.')
@@ -82,12 +82,13 @@ def preview(manager,value):
     original_pools={s['name']:s for s in bindings(base) if s['type']=='backend'}
     for m in patches.values():
         old=next(x for x in models if x['id']==m['id'])
-        if action=='upsert' and 'backends' in m and m['backends']!=pool_servers(original_pools[old['import_pool']]):raise ValueError('Меняйте серверы через параметры общего backend.')
+        if old.get('import_pool') and action=='upsert' and 'backends' in m and m['backends']!=pool_servers(original_pools[old['import_pool']]):raise ValueError('Меняйте серверы через параметры общего backend.')
     draft_engine=DraftEngine(engine,original);child=ServiceManager(draft_engine);notes=[];summary=[]
     for identifier in group['members']:
         m=patches[identifier]
-        if action!='delete':
+        if action!='delete' and m.get('import_pool'):
             current_base,_=clean(draft_engine.raw);pool=next(s for s in bindings(current_base) if s['type']=='backend' and s['name']==next(x for x in models if x['id']==identifier)['import_pool']);m['backends']=pool_servers(pool)
+        if m.get('sni_routing'):m.setdefault('sni_domains',m.get('domains',[]))
         checked,draft=child.preview(m,draft_engine.snapshot()[1],'delete' if action=='delete' else 'upsert',probe=False)
         if not checked['ok']:raise ValueError(checked['output'])
         draft_engine.raw=draft['raw'];notes+=checked.get('warnings',[]);summary+=checked.get('summary',[])

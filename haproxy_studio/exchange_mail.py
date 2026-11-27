@@ -4,16 +4,20 @@ import difflib
 from .core import Conflict,mask
 from .services import clean,ServiceManager
 
+def mail_protocol(model):
+    value=model.get('classification',{}).get('id')
+    return value if value in ('imaps','smtps') else model['protocol']
+
 def attach(result,models):
     for m in models:
         if m['protocol']=='exchange' and not m.get('import_pool'):
             result.append(dict(id='exchange-'+m['id'],name=m['name'],members=[m['id']],roles={m['id']:'HTTPS'},domains=m['domains'],tls_mode=m['tls_mode'],frontend='',port=m['port'],enabled=m['enabled'],mixed_enabled=False,native=m['id']))
     for g in result:g['web_members']=list(g['members'])
     for m in models:
-        if m['protocol'] not in ('imaps','smtps'):continue
+        if mail_protocol(m) not in ('imaps','smtps'):continue
         choices=[g for g in result if m.get('exchange_parent') in g['web_members']] if m.get('exchange_parent') else [g for g in result if set(m.get('domains',[]))&set(g['domains'])]
         if len(choices)!=1:continue
-        g=choices[0];g['members'].append(m['id']);g['roles'][m['id']]=m['protocol'].upper()
+        g=choices[0];g['members'].append(m['id']);g['roles'][m['id']]=mail_protocol(m).upper()
     by_id={m['id']:m for m in models}
     for g in result:
         states={by_id[i]['enabled'] for i in g['members']};g['enabled']=all(states);g['mixed_enabled']=len(states)>1
@@ -28,12 +32,12 @@ def preview(manager,value,revision,action='upsert'):
     checked,draft=child.preview(submitted,child.engine.snapshot()[1],action,probe=False)
     if not checked['ok']:return checked,draft
     child.engine.raw=draft['raw'];_,after=clean(draft['raw']);parent=value.get('id') or next(m['id'] for m in after if m['id'] not in {x['id'] for x in models})
-    old={m['id']:m for m in models if group and m['id'] in group['members'] and m['protocol'] in ('imaps','smtps')}
+    old={m['id']:m for m in models if group and m['id'] in group['members'] and mail_protocol(m) in ('imaps','smtps')}
     if mail is None:mail=[dict(m,enabled=value.get('enabled',m['enabled'])) for m in old.values()]
     if not isinstance(mail,list) or len(mail)>16:raise ValueError('Некорректный список почтовых служб Exchange.')
     seen=set()
     for row in mail:
-        if not isinstance(row,dict) or row.get('protocol') not in ('imaps','smtps'):raise ValueError('Поддерживаются IMAPS и SMTPS.')
+        if not isinstance(row,dict) or mail_protocol(row) not in ('imaps','smtps'):raise ValueError('Поддерживаются IMAPS и SMTPS.')
         if row.get('id') and (row['id'] not in old or row['id'] in seen):raise ValueError('Почтовая служба не принадлежит этому Exchange или повторяется.')
         if row.get('id'):seen.add(row['id'])
         row=dict(row,exchange_parent=parent)

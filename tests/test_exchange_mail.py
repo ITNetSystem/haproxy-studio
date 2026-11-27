@@ -19,3 +19,26 @@ class ExchangeMailTests(ServicesFixture):
         original=self.config.read_bytes();value=self.data('exchange');value['exchange_mail']=[self.data('imaps',port=18080,sni_routing=True,sni_domains=['app.example.test'])]
         with self.assertRaises(ValueError):preview(self.manager,value,self.engine.snapshot()[1])
         self.assertEqual(original,self.config.read_bytes())
+
+    def test_recognized_tls_mail_joins_exchange_without_rewriting_transport(self):
+        root=self.manager.normalize(self.data('exchange'),'a'*16)
+        mail=self.manager.normalize(self.data('tls',port=465,sni_routing=True,sni_domains=['app.example.test'],tls_mode='terminate'),'b'*16)
+        before=dict(mail)
+        result=groups([root,mail],'',self.settings)
+        self.assertEqual(['a'*16,'b'*16],result[0]['members'])
+        self.assertEqual('SMTPS',result[0]['roles']['b'*16])
+        self.assertEqual(before['protocol'],mail['protocol'])
+
+    def test_imported_exchange_can_edit_new_native_mail_member(self):
+        from test_exchange_groups import ExchangeGroupTests
+        from haproxy_studio.importer import Importer
+        from haproxy_studio.exchange_groups import preview as group_preview
+        self.config.write_bytes(ExchangeGroupTests.source(self))
+        request=dict(revision=self.engine.snapshot()[1]);scan=Importer(self.manager).scan(request)
+        checked,draft=Importer(self.manager).preview(dict(request,fingerprint=scan['fingerprint'],selected=[c['id'] for c in scan['candidates']]))
+        self.config.write_bytes(draft['raw']);root=clean(draft['raw'])[1][0]
+        checked,added=self.preview(self.data('imaps',name='IMAPS Exchange',exchange_parent=root['id'],sni_routing=True,sni_domains=['app.example.test']))
+        self.assertTrue(checked['ok'],checked['output']);self.config.write_bytes(added['raw']);catalog=self.manager.catalog();group=catalog['exchange_groups'][0]
+        self.assertEqual(9,len(group['members']))
+        checked,edited=group_preview(self.manager,dict(id=group['id'],revision=catalog['revision'],services=catalog['services']))
+        self.assertTrue(checked['ok'],checked['output']);self.assertEqual(added['raw'],edited['raw'])
