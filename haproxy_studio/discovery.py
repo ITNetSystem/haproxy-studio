@@ -28,6 +28,11 @@ def discover(raw,rows=(),source_spans=(),settings=None):
                     if tokens[0]=='acl' and len(tokens)>3 and ('hdr(host)' in tokens[2] or 'ssl_sni' in tokens[2] or 'ssl_fc_sni' in tokens[2]):
                         if len(parts)<3 or tokens[1] in parts[2:]:domains += [d for d in tokens[3:] if re.fullmatch(r'[a-zA-Z0-9*-]+(?:\.[a-zA-Z0-9*-]+)+',d)]
             except Unsupported:pass
+            if any(t in parts for t in ('ssl_fc_sni','req.ssl_sni','req_ssl_sni')):
+                domains += [t for t in parts if re.fullmatch(r'[a-zA-Z0-9*-]+(?:\.[a-zA-Z0-9*-]+)+',t) and t not in ('req.ssl_sni',)]
+            issue=''
+            if not any(b['tls'] for b in front['binds']) and ('ssl_fc_sni' in parts or any('ssl_fc_sni' in line and any(t in line.split() for t in parts[3:]) for _,line in front['lines'] if line.lstrip().startswith('acl '))):
+                issue='Условие ssl_fc_sni не получает SNI на входе без bind ssl. Для STARTTLS 143/587 нужен общий пул или отдельные IP/порты; исправление требует явного выбора маршрутизации.'
             pool=next((s for s in parsed if s['name']==name and s['type']=='backend'),None)
             health_path=''
             if pool:
@@ -47,5 +52,5 @@ def discover(raw,rows=(),source_spans=(),settings=None):
             line=original_named.get(name,target).get('line');source_name=None
             for start,end,source in source_spans:
                 if line and start<=line<=end:source_name=source;line=line-start+1;break
-            result.append(dict(classification=classification,infrastructure=infrastructure,source=source_name,exchange=exchange,health_path=health_path,id=identifier,name=name,management='manual',frontend=front['name'],backend=name,domains=list(dict.fromkeys(domains)),ports=[b['lo'] for b in front['binds']],servers=servers,runtime=used,line=line,condition=('Условие содержит защищённые данные; используйте редактор конфигурации.' if '@studio-protected-' in mask(encode(' '.join(parts)))[0] else ' '.join(parts[2:])),status='Сервер доступен' if any(r.get('status')=='UP' for r in used) else 'Сервер недоступен' if used else 'Статистика пока недоступна'))
+            result.append(dict(classification=classification,infrastructure=infrastructure,source=source_name,exchange=exchange,health_path=health_path,id=identifier,name=name,management='manual',routing_issue=issue,frontend=front['name'],backend=name,domains=list(dict.fromkeys(domains)),ports=[b['lo'] for b in front['binds']],servers=servers,runtime=used,line=line,condition=('Условие содержит защищённые данные; используйте редактор конфигурации.' if '@studio-protected-' in mask(encode(' '.join(parts)))[0] else ' '.join(parts[2:])),status='Сервер доступен' if any(r.get('status')=='UP' for r in used) else 'Сервер недоступен' if used else 'Статистика пока недоступна'))
     return result

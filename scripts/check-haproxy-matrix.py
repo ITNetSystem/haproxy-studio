@@ -30,6 +30,7 @@ def generate(root):
     def data(protocol,**changes):
         value=dict(acl_prefix='acl_compat_'+protocol,name='Compatibility '+protocol,protocol=protocol,domain='app.example.test',certificate='cert.pem',backends=[dict(host='192.0.2.10',port=PRESETS[protocol][2])]);value.update(changes);return value
     for protocol in PRESETS:save(protocol,[data(protocol)])
+    save('exchange-with-mail-starttls',[data('exchange'),data('imap'),data('submission'),data('imaps',sni_routing=True,sni_domains=['app.example.test']),data('smtps',sni_routing=True,sni_domains=['app.example.test'])])
     save('rds-token',[data('rds',rds_mode='token')])
     save('rdweb-classic-only',[data('rdwebproxy',rdweb_access='standard')])
     save('rdweb-html5-only',[data('rdwebproxy',rdweb_access='html5')])

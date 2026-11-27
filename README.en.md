@@ -167,3 +167,6 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 
 
 0.20 groups Exchange HTTPS, IMAPS and SMTPS in one card. The Exchange wizard can publish both mail protocols in one reviewed transaction, retaining independent ports, SNI and TLS settings. Existing managed mail services join only an unambiguous matching Exchange domain group; raw unimported sections are unchanged. SMTP 25/587 remains separate. The configuration editor includes line numbers; generated blocks include readable service comments while retaining integrity IDs and hashes.
+
+
+0.21 adds Exchange IMAP/143 and SMTP Submission/587, forwarding STARTTLS transparently. Legacy mail rules with an unambiguous Exchange association appear inside its card as partial management, with their original conditions and routing warnings. They are not falsely marked as fully imported and are not modified by managed group enable/disable/delete. New mail presets share consistent labels; direct RDP is distinguished from an RDS broker. Legacy RD Web passthrough is hidden for new publications but existing models remain editable.

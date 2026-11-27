@@ -42,3 +42,27 @@ class ExchangeMailTests(ServicesFixture):
         self.assertEqual(9,len(group['members']))
         checked,edited=group_preview(self.manager,dict(id=group['id'],revision=catalog['revision'],services=catalog['services']))
         self.assertTrue(checked['ok'],checked['output']);self.assertEqual(added['raw'],edited['raw'])
+
+    def test_exchange_can_publish_starttls_143_and_587_without_sni(self):
+        value=self.data('exchange');value['exchange_mail']=[self.data(p,name=p,domain='',certificate='',redirect=False) for p in ('imap','submission')]
+        checked,draft=preview(self.manager,value,self.engine.snapshot()[1]);self.assertTrue(checked['ok'],checked['output'])
+        base,models=clean(draft['raw']);mail=[m for m in models if m['protocol']!='exchange']
+        self.assertEqual({143,587},{m['port'] for m in mail});self.assertTrue(all(m['tls_mode']=='plain' and not m['sni_routing'] and not m['upstream_tls'] for m in mail))
+        self.assertEqual(3,len(groups(models,base,self.settings)[0]['members']))
+
+    def test_manual_submission_shown_inside_exchange_without_claiming_import(self):
+        from haproxy_studio.exchange_mail import attach_inventory
+        from haproxy_studio.discovery import discover
+        from haproxy_studio.services import bindings
+        root=self.manager.normalize(self.data('exchange'),'a'*16)
+        source=b'global\ndefaults\n mode tcp\n timeout connect 5s\n timeout client 30s\n timeout server 30s\nfrontend mail_smtp_587\n bind :587\n mode tcp\n use_backend submission_pool if { ssl_fc_sni app.example.test }\nbackend submission_pool\n mode tcp\n server mail 192.0.2.15:587\n'
+        farms=groups([root],'',self.settings);items=discover(source,settings=self.settings);self.assertEqual(1,len(items));attach_inventory(farms,items,[root])
+        self.assertEqual(farms[0]['id'],items[0]['exchange_group']);self.assertIn('ssl_fc_sni',items[0]['routing_issue']);self.assertEqual('manual',items[0]['management']);self.assertEqual(1,len(farms[0]['retained_mail']))
+
+    def test_plain_mail_groups_by_unique_exchange_ip_ignoring_port(self):
+        root=self.manager.normalize(self.data('exchange'),'a'*16)
+        mail=self.manager.normalize(self.data('submission',certificate=''),'b'*16)
+        self.assertEqual([],mail['domains'])
+        self.assertEqual(['a'*16,'b'*16],groups([root,mail],'',self.settings)[0]['members'])
+        other=dict(root,id='c'*16)
+        self.assertTrue(all(mail['id'] not in g['members'] for g in groups([root,other,mail],'',self.settings)))

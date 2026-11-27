@@ -21,17 +21,17 @@ PRESETS = {
     'rdweb': ('RDS: RD Web — сквозной TLS до IIS',443,443,'tcp','passthrough','Веб-портал RDS: обычная страница или HTML5-клиент. Сквозной TLS до IIS, сертификат на Windows. Не создаёт роль RD Gateway.'),
     'rdwebproxy': ('RDS: RD Web — редирект на HAProxy',443,443,'http','terminate','Сертификат на HAProxy, перенаправление корня на /RDWeb/ или HTML5. HTTPS до IIS. Для RD Gateway используйте отдельный сквозной TLS-сервис.'),
     'studio': ('HAProxy Studio — эта панель',443,9130,'http','terminate','Публикация панели с сертификатом HAProxy, корневым редиректом и завершающим слешем. Предложит сменить public_url после применения.'),
-    'rds': ('RDS: прямой RDP через брокер (3389)',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
-    'rdp': ('Удалённый рабочий стол RDP',3389,3389,'tcp','plain','Прозрачная передача RDP. Шифрование и учётные записи на Windows-сервере.'),
+    'rds': ('RDS — ферма через брокер (3389)',3389,3389,'tcp','plain','Ферма рабочих столов RDS: вход через брокер или маршрутизация на Session Host по токену брокера. Шифрование и NLA остаются на Windows.'),
+    'rdp': ('RDP — прямое подключение (3389)',3389,3389,'tcp','plain','Прозрачная передача RDP. Шифрование и учётные записи на Windows-сервере.'),
     'ssh': ('SSH',22,22,'tcp','plain','Прозрачная передача SSH. Выберите свободный внешний порт, например 2222.'),
-    'smtp': ('Почта SMTP / STARTTLS',25,25,'tcp','plain','SMTP и STARTTLS проходят без изменения. Сертификат хранится на почтовом сервере.'),
-    'submission': ('Отправка почты STARTTLS',587,587,'tcp','plain','Передача SMTP submission и STARTTLS без расшифровки на HAProxy.'),
-    'smtps': ('Почта SMTPS',465,465,'tcp','passthrough','TLS до почтового сервера или расшифровка сертификатом на HAProxy.'),
-    'imap': ('Почта IMAP / STARTTLS',143,143,'tcp','plain','IMAP и STARTTLS проходят без изменения. TLS и сертификат обслуживает почтовый сервер.'),
-    'pop3': ('Почта POP3 / STARTTLS',110,110,'tcp','plain','POP3 и переход на TLS передаются прозрачно почтовому серверу.'),
-    'sieve': ('Почтовые фильтры ManageSieve / STARTTLS',4190,4190,'tcp','plain','Управление почтовыми фильтрами Sieve; STARTTLS остаётся на почтовом сервере.'),
-    'imaps': ('Почта IMAPS',993,993,'tcp','passthrough','Защищённый доступ к почтовому ящику.'),
-    'pop3s': ('Почта POP3S',995,995,'tcp','passthrough','Защищённое получение почты по POP3.'),
+    'smtp': ('Почта SMTP / STARTTLS (25)',25,25,'tcp','plain','SMTP и STARTTLS проходят без изменения. Сертификат хранится на почтовом сервере.'),
+    'submission': ('Почта SMTP Submission / STARTTLS (587)',587,587,'tcp','plain','Передача SMTP submission и STARTTLS без расшифровки на HAProxy.'),
+    'smtps': ('Почта SMTPS (465)',465,465,'tcp','passthrough','TLS до почтового сервера или расшифровка сертификатом на HAProxy.'),
+    'imap': ('Почта IMAP / STARTTLS (143)',143,143,'tcp','plain','IMAP и STARTTLS проходят без изменения. TLS и сертификат обслуживает почтовый сервер.'),
+    'pop3': ('Почта POP3 / STARTTLS (110)',110,110,'tcp','plain','POP3 и переход на TLS передаются прозрачно почтовому серверу.'),
+    'sieve': ('Почта ManageSieve / STARTTLS (4190)',4190,4190,'tcp','plain','Управление почтовыми фильтрами Sieve; STARTTLS остаётся на почтовом сервере.'),
+    'imaps': ('Почта IMAPS (993)',993,993,'tcp','passthrough','Защищённый доступ к почтовому ящику.'),
+    'pop3s': ('Почта POP3S (995)',995,995,'tcp','passthrough','Защищённое получение почты по POP3.'),
     'mysql': ('База данных MySQL',3306,3306,'tcp','plain','TCP-передача MySQL. Рекомендуется ограничить доступ по IP.'),
     'postgresql': ('База данных PostgreSQL',5432,5432,'tcp','plain','Нативное согласование PostgreSQL TLS сохраняется на сервере.'),
     'redis': ('Redis',6379,6379,'tcp','plain','TCP-передача Redis. Настройте пароль сервера и список разрешённых IP.'),
@@ -276,7 +276,10 @@ class ServiceManager:
         if not self.engine.settings['read_only']:
             build=compatibility(self.engine.settings['haproxy_binary'],self.engine.command)
             diagnostic=dict(validation=self.engine.validate(raw),ssl_library=build['ssl_library'],ssl_issues=ssl_issues(raw,build))
-        return dict(exchange_groups=grouped_exchange,diagnostic=diagnostic,discovered_services=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans,self.engine.settings)],studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
+        from .exchange_mail import attach_inventory
+        discovered=[dict(item,pool_id=pools.get(item['backend'],{}).get('id'),editable=bool(not item['infrastructure'] and pools.get(item['backend']) and not pools[item['backend']].get('edit_blocked',pools[item['backend']]['blocked']))) for item in discover(inventory_raw,rows,source_spans,self.engine.settings)]
+        attach_inventory(grouped_exchange,discovered,models)
+        return dict(exchange_groups=grouped_exchange,diagnostic=diagnostic,discovered_services=discovered,studio=dict(bind=self.engine.settings['bind'],port=self.engine.settings['port'],base_path=self.engine.settings['base_path'],public_url=self.engine.settings['public_url']),service_status=statuses,route_runtime=route_runtime,runtime=runtime,services=models,revision=revision,read_only=self.engine.settings['read_only'],presets=[dict(id=k,label=v[0],port=v[1],backend_port=v[2],kind=v[3],tls=v[4],description=v[5]) for k,v in PRESETS.items()],certificates=self.engine.certificates()['certificates'],https_frontends=[dict(name=s['name'],port=b['lo'],address=b['host']) for s in bindings(base) if s['type']=='frontend' and s['mode']=='http' for b in s['binds'] if b['tls']],listeners=[dict(name=s['name'],mode=s['mode'],bindings=[dict(address=b['host'],port=b['lo'],tls=b['tls']) for b in s['binds']]) for s in bindings(base) if s['binds']],notes=['DNS домена должен указывать на этот сервер. Внешний firewall и правила облачного провайдера настраиваются у провайдера.','Веб-сайты могут разделять HTTP/HTTPS-вход. RDP, почта и сквозной TLS используют отдельный TCP-порт.'])
 
     def render(self,base,models,probe=True,owned_bindings=None):
         lines=base.splitlines(keepends=True);parsed=bindings(base)

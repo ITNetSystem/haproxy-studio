@@ -147,7 +147,7 @@ def discover(manager,base,parsed,existing=()):
                 fetch=fetches.pop();http=front['mode']=='http'
                 if http and not(fetch.startswith('hdr(host)') or bind['tls'] and fetch=='ssl_fc_sni'):raise Unsupported('Доменный ACL не соответствует режиму входа.')
                 if not http and fetch.startswith('hdr(host)'):raise Unsupported('HTTP Host ACL не соответствует TCP-входу.')
-                if not http and (fetch=='ssl_fc_sni')!=bind['tls']:raise Unsupported('SNI не соответствует TLS-режиму bind.')
+                if not http and (fetch=='ssl_fc_sni')!=bind['tls']:raise Unsupported('Условие SNI не соответствует TLS-режиму bind. Для SMTP/IMAP с STARTTLS на 25/587/143 нельзя выбирать домен через ssl_fc_sni без bind ssl. Сохранены исходные правила; выберите общий пул или отдельные IP/порты.')
                 protocol='https' if http and bind['tls'] else 'http' if http else 'tls'
                 if not http and not bind['tls']:mode='passthrough'
                 else:mode='terminate' if bind['tls'] else 'plain'

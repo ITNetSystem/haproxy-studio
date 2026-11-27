@@ -189,7 +189,7 @@ class Importer:
                         http=front['mode']=='http'
                         if http!=(a[2].startswith('hdr(host)')):raise Unsupported('Тип ACL не соответствует режиму frontend.')
                         if http and bind['tls'] and a[2]=='hdr(host)':raise Unsupported('HTTPS с полным Host требует ручного сопоставления порта в имени.')
-                        if not http and (a[2]=='ssl_fc_sni')!=bind['tls']:raise Unsupported('SNI не соответствует TLS-режиму bind.')
+                        if not http and (a[2]=='ssl_fc_sni')!=bind['tls']:raise Unsupported('Условие SNI не соответствует TLS-режиму bind. Для SMTP/IMAP с STARTTLS на 25/587/143 нельзя выбирать домен через ssl_fc_sni без bind ssl. Сохранены исходные правила; выберите общий пул или отдельные IP/порты.')
                         refs=2 if fallback else sum(len(re.findall(r'(?<![\w.-])'+re.escape(r[3])+r'(?![\w.-])',' '.join(p))) for _,p in commands)
                         if refs!=2:raise Unsupported('ACL используется несколькими правилами; он остаётся ручным.')
                         backend=None
