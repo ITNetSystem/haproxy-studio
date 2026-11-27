@@ -42,6 +42,9 @@ class ExchangeMailTests(ServicesFixture):
         self.assertEqual(9,len(group['members']))
         checked,edited=group_preview(self.manager,dict(id=group['id'],revision=catalog['revision'],services=catalog['services']))
         self.assertTrue(checked['ok'],checked['output']);self.assertEqual(added['raw'],edited['raw'])
+        old_models=clean(added['raw'])[1]
+        checked,new=preview(self.manager,self.data('exchange',name='Independent Exchange',domain='other.example.test',exchange_mail=[]),self.engine.snapshot()[1])
+        self.assertTrue(checked['ok'],checked['output']);self.assertEqual(old_models,clean(new['raw'])[1][:-1]);self.assertEqual(1,len(clean(new['raw'])[1])-len(old_models))
 
     def test_exchange_can_publish_starttls_143_and_587_without_sni(self):
         value=self.data('exchange');value['exchange_mail']=[self.data(p,name=p,domain='',certificate='',redirect=False) for p in ('imap','submission')]

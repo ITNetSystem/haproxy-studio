@@ -34,7 +34,7 @@ def preview(manager,value,revision,action='upsert'):
     from .exchange_groups import DraftEngine,groups
     engine=manager.engine;raw,actual=engine.snapshot()
     if revision!=actual:raise Conflict('Конфигурация изменилась. Обновите сервисы.')
-    base,models=clean(raw);group=next((g for g in groups(models,base,engine.settings) if g.get('native')==value.get('id')),None)
+    base,models=clean(raw);group=next((g for g in groups(models,base,engine.settings) if g.get('native')==value['id']),None) if value.get('id') else None
     child=ServiceManager(DraftEngine(engine,raw));submitted=copy.deepcopy(value);mail=submitted.pop('exchange_mail',None)
     checked,draft=child.preview(submitted,child.engine.snapshot()[1],action,probe=False)
     if not checked['ok']:return checked,draft
