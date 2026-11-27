@@ -52,7 +52,7 @@ def sections(raw):
         stripped = line.strip()
         if not stripped or stripped.startswith('#'):
             continue
-        found = re.match(r'^(global|defaults|frontend|backend|listen)\b(?:\s+(\S+))?', line)
+        found = re.match(r'^(global|defaults|frontend|backend|listen)\b(?:\s+(\S+))?', stripped)
         if found:
             current = dict(type=found[1], name=found[2] or found[1], line=number, binds=[], servers=[], routes=[], domains=[])
             result.append(current)
@@ -333,14 +333,14 @@ class Engine:
             warning = 'Runtime API недоступен. Проверьте путь к socket, права доступа и службу HAProxy.'
         allowed = ('Version', 'Uptime', 'CurrConns', 'CumConns', 'ConnRate', 'Maxconn', 'Nbthread')
         from .services import clean
-        from .monitoring import annotate
+        from .monitoring import annotate,overview_servers
         from .routing import describe,publications
         base,models=clean(raw)
         from .service_types import annotate as annotate_types
         annotate_types(models,base,self.settings)
         parsed=describe(raw,sections(raw),models)
         annotate(rows,parsed,models)
-        return dict(info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
+        return dict(server_groups=overview_servers(rows,parsed,models,base,self.settings),info={key: info.get(key) for key in allowed}, rows=rows, sections=parsed, publications=publications(models,rows,parsed), revision=revision, warning=warning, time=time.time(), read_only=self.settings['read_only'])
 
     def history(self):
         backups = [json.loads(p.read_text()) for p in sorted((self.state / 'backups').glob('*/meta.json'), reverse=True)][:50]

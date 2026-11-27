@@ -157,3 +157,5 @@ Version 0.16 preserves isolated complex pools and original TLS dependencies (`cr
 0.16.1 supports uploading a ready Studio config with existing managed services and zero new candidates. Explicit replacement confirmation, native validation, diff review and the normal backed-up Apply flow remain required; ready files are preserved byte for byte.
 
 0.17 provides one card and editor for recognized families of imported Exchange web services. Per-path domains, checks and retained pools are preserved; changes are reviewed and applied in one transaction. Existing imports are grouped automatically without reimport. [Unified Exchange editor (Russian)](docs/exchange-unified.ru.md).
+
+0.18 groups overview checks by service and destination, preserving per-path status and connections in details. TLS-terminated RD Web publications can explicitly expose both interfaces, classic only or HTML5 only; existing publications default to both. [Details and limitations (Russian)](docs/overview-and-rdweb.ru.md).

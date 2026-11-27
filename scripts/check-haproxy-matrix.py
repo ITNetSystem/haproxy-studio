@@ -31,6 +31,9 @@ def generate(root):
         value=dict(name='Compatibility '+protocol,protocol=protocol,domain='app.example.test',certificate='cert.pem',backends=[dict(host='192.0.2.10',port=PRESETS[protocol][2])]);value.update(changes);return value
     for protocol in PRESETS:save(protocol,[data(protocol)])
     save('rds-token',[data('rds',rds_mode='token')])
+    save('rdweb-classic-only',[data('rdwebproxy',rdweb_access='standard')])
+    save('rdweb-html5-only',[data('rdwebproxy',rdweb_access='html5')])
+    save('rdweb-filter-with-http-exception',[data('rdwebproxy',rdweb_access='standard',redirect=True,http_exceptions=['/RDWeb'])])
     for tls in ('terminate','passthrough'):
         save('shared-sni-'+tls,[data('imaps',tls_mode=tls,sni_routing=True,sni_domains='app.example.test',sni_default=True),data('imaps',tls_mode=tls,sni_routing=True,sni_domains='other.example.test')])
     save('shared-https',[data('https'),data('https',domain='other.example.test')])

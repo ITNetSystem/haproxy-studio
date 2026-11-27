@@ -141,6 +141,8 @@ def http_route(m,redirect=False):
     fetch='hdr(host)' if (redirect or m['tls_mode']=='plain') and m.get('http_host_match')=='raw' else 'hdr(host),lower,field(1,:)'
     body='    acl '+ident+'_host '+fetch+' -i '+' '.join(model_domains(m))+'\n'
     host_condition=' '.join(conditions)
+    from .rdweb import access_rules
+    body+=access_rules(m,host_condition,redirect)
     if not redirect and m.get('canonical_slash'):body+=location_redirect(m['path']+'/',host_condition+' { path '+m['path']+' }')
     if not redirect and m.get('redirect_root') and m.get('root_redirect'):body+=location_redirect(m['root_redirect'],host_condition+' { path / }'+(' { method GET HEAD }' if m['protocol'] in ('rdwebproxy','studio') else ''))
     if m['path']!='/' and not (redirect and m.get('http_redirect_all_paths')):body+=path_acl(ident+'_path',m['path'],m.get('path_ignore_case'));conditions.append(ident+'_path')

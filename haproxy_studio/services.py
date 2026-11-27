@@ -556,6 +556,10 @@ class ServiceManager:
                 renamed=changes(existing,model)
                 checked['summary'] += [old+' → '+new for old,new in renamed.items()]
                 if renamed or [s.get('name') for s in existing['backends']]!=[s.get('name') for s in model['backends']]:checked['warnings'].append('Меняются технические имена. Проверьте внешние скрипты, метрики, Runtime API и server-state, использующие старые имена.')
+            if model['protocol']=='rdwebproxy':
+                access=model.get('rdweb_access','both')
+                checked['summary'].append('Интерфейсы RD Web: '+{'both':'обычный и HTML5; выбор стартовой страницы не закрывает второй интерфейс.','standard':'только обычный RD Web; /RDWeb/webclient получает 403.','html5':'только HTML5; /RDWeb/Pages получает 403.'}[access])
+                if access!='both':checked['warnings'].append('Ограничение интерфейса действует по HTTP-пути. Проверьте вход, SSO и смену пароля: настроенные в IIS зависимости могут использовать закрытую страницу. Общие Feed/RPC/Gateway-пути сохраняются; это не замена авторизации Windows.')
             if model['protocol'] in ('rdgateway','rdweb'):
                 gateway=model['protocol']=='rdgateway'
                 from .rdweb import path as portal_path
